@@ -29,7 +29,6 @@ fn run(args: cli::Args) -> Result<(), Box<dyn std::error::Error>> {
             args.port.unwrap_or(net::DEFAULT_PORT)
         )
     })?;
-    listener.set_nonblocking(true)?;
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async_main(args, root, single_file, listener, port, bumped))
@@ -79,10 +78,49 @@ async fn async_main(
         }
     };
 
-    print_banner(&args, &state, port, bumped, &others, single_file, &root, _mdns_guard.is_some());
+    let scheme = if args.tls { "https" } else { "http" };
+
+    let tls_config = if args.tls {
+        let mut sans = vec![
+            "fshare.local".to_string(),
+            fshare::mdns::machine_hostname(),
+            "localhost".to_string(),
+        ];
+        sans.extend(
+            net::ranked_ifaces()
+                .into_iter()
+                .filter(|i| i.kind != net::IfaceKind::Loopback)
+                .map(|i| i.ip.to_string()),
+        );
+        let paths = fshare::tls::load_or_generate(&fshare::tls::data_dir(), &sans)?;
+        println!(
+            "  {} TLS cert fingerprint SHA256: {}{}",
+            "note:".yellow(),
+            paths.fingerprint,
+            if paths.generated { "  (newly generated)" } else { "" },
+        );
+        Some(
+            axum_server::tls_rustls::RustlsConfig::from_pem_file(&paths.cert, &paths.key)
+                .await
+                .map_err(|e| format!("TLS config: {e}"))?,
+        )
+    } else {
+        None
+    };
+
+    print_banner(
+        &args,
+        &state,
+        port,
+        bumped,
+        &others,
+        single_file,
+        &root,
+        _mdns_guard.is_some(),
+        scheme,
+    );
 
     let app = server::router(state.clone());
-    let listener = tokio::net::TcpListener::from_std(listener)?;
 
     let expire = expiry::wait(
         args.timeout,
@@ -90,16 +128,26 @@ async fn async_main(
         state.downloads_done.clone(),
         state.download_signal.clone(),
     );
+    let shutdown = async {
+        tokio::select! {
+            reason = expire => println!("\n  {} — shutting down", reason.yellow()),
+            _ = tokio::signal::ctrl_c() => println!(),
+        }
+    };
 
-    let serve = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    );
-
-    tokio::select! {
-        r = serve => r?,
-        reason = expire => println!("\n  {} — shutting down", reason.yellow()),
-        _ = tokio::signal::ctrl_c() => println!(),
+    let make = app.into_make_service_with_connect_info::<std::net::SocketAddr>();
+    listener.set_nonblocking(true)?;
+    if let Some(cfg) = tls_config {
+        tokio::select! {
+            r = axum_server::from_tcp_rustls(listener, cfg)?.serve(make) => r?,
+            _ = shutdown => {}
+        }
+    } else {
+        let l = tokio::net::TcpListener::from_std(listener)?;
+        tokio::select! {
+            r = axum::serve(l, make) => r?,
+            _ = shutdown => {}
+        }
     }
 
     let s = &state.stats;
@@ -134,6 +182,7 @@ fn print_banner(
     single_file: bool,
     root: &std::path::Path,
     mdns_on: bool,
+    scheme: &str,
 ) {
     let ver = env!("CARGO_PKG_VERSION");
     if single_file {
@@ -153,7 +202,7 @@ fn print_banner(
     println!();
 
     if mdns_on {
-        println!("  {} http://fshare.local:{port}{}/    (mDNS)", "➜".green(), state.base);
+        println!("  {} {scheme}://fshare.local:{port}{}/    (mDNS)", "➜".green(), state.base);
     }
     let ifaces = net::ranked_ifaces();
     let mut best_url = None;
@@ -162,7 +211,7 @@ fn print_banner(
             IpAddr::V6(v6) => format!("[{v6}]"),
             IpAddr::V4(v4) => v4.to_string(),
         };
-        let url = format!("http://{host}:{port}{}/", state.base);
+        let url = format!("{scheme}://{host}:{port}{}/", state.base);
         let kind = match ifc.kind {
             net::IfaceKind::Lan => "LAN, ",
             _ => "",

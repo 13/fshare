@@ -30,6 +30,10 @@ bytes = "1"
 futures = "0.3"
 html-escape = "0.2"
 mdns-sd = "0.20.1"
+rcgen = "0.14.8"
+sha2 = "0.11.0"
+time = "0.3.53"
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

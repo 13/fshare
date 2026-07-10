@@ -42,6 +42,7 @@ fshare --hidden             # also serve dotfiles (hidden by default)
 fshare --no-zip             # disable folder zip downloads
 fshare --no-qr              # skip the QR code
 fshare --no-mdns            # skip fshare.local announcement
+fshare --tls                # HTTPS with persisted self-signed cert
 fshare --json-log           # JSON-lines event log for scripting
 fshare --upload             # allow uploads into the browsed folder (drag & drop)
 fshare --upload --max-upload-size 2G
@@ -70,12 +71,15 @@ Extras:
 - Dotfiles are hidden from listings *and* direct fetch unless `--hidden`.
 - `--token` protects against casual URL guessing on shared networks; it is
   not authentication.
-- `--auth` adds HTTP Basic authentication (constant-time verified). Note:
-  credentials travel base64-encoded over plain HTTP — fine for a trusted
-  LAN, use a VPN/tunnel beyond that.
+- `--auth` adds HTTP Basic authentication (constant-time verified). Over
+  plain HTTP credentials travel base64-encoded — fine for a trusted LAN;
+  add `--tls` to encrypt them.
+- `--tls` serves HTTPS with a self-signed certificate persisted in
+  `~/.local/share/fshare/` (delete the directory to regenerate). The
+  SHA-256 fingerprint is printed at startup so you can match the browser
+  warning.
 
 ## Roadmap
 
-- Optional self-signed TLS
 - Bandwidth limiting
 - Airdrop-style push between fshare instances

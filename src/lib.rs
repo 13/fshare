@@ -7,5 +7,6 @@ pub mod log;
 pub mod mdns;
 pub mod net;
 pub mod server;
+pub mod tls;
 pub mod upload;
 pub mod zip;

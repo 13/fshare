@@ -66,6 +66,10 @@ pub struct Args {
     /// Don't announce fshare.local via mDNS
     #[arg(long)]
     pub no_mdns: bool,
+
+    /// Serve HTTPS with a persisted self-signed certificate
+    #[arg(long)]
+    pub tls: bool,
 }
 
 pub fn parse_size(s: &str) -> Result<u64, String> {

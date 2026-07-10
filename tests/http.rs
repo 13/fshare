@@ -315,6 +315,53 @@ async fn basic_auth_gates_all_routes() {
     assert_eq!(r.status(), 401);
 }
 
+#[tokio::test]
+async fn tls_serves_https() {
+    let t = fixture();
+    let certdir = tempfile::tempdir().unwrap();
+    let tls =
+        fshare::tls::load_or_generate(certdir.path(), &["localhost".to_string()]).unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let opts = fshare::server::ShareOpts {
+        show_hidden: false,
+        follow_links: false,
+        zip: true,
+        upload: false,
+        max_upload: None,
+    };
+    let state = Arc::new(fshare::server::AppState::new(
+        root,
+        false,
+        opts,
+        false,
+        fshare::log::Logger::spawn(false),
+        None,
+    ));
+    let app = fshare::server::router(state);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&tls.cert, &tls.key)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        axum_server::from_tcp_rustls(listener, config)
+            .unwrap()
+            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+            .await
+            .unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let c = reqwest::Client::builder().danger_accept_invalid_certs(true).build().unwrap();
+    let r = c.get(format!("https://{addr}/hello.txt")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "hello world");
+
+    // plain http against TLS port fails
+    assert!(reqwest::get(format!("http://{addr}/")).await.is_err());
+}
+
 fn walkdir_all(root: &std::path::Path) -> Vec<String> {
     let mut v = Vec::new();
     for e in std::fs::read_dir(root).unwrap().flatten() {
