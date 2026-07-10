@@ -1,9 +1,5 @@
-mod cli;
-mod instance;
-mod listing;
-mod net;
-mod server;
 use clap::Parser;
+use fshare::cli;
 
 fn main() {
     let args = cli::Args::parse();

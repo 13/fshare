@@ -1,5 +1,18 @@
+use axum::{
+    body::Body,
+    extract::{Query, Request, State},
+    http::{header, StatusCode, Uri},
+    response::{Html, IntoResponse, Response},
+    routing::get,
+    Router,
+};
 use percent_encoding::percent_decode_str;
+use rand::Rng;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tower::ServiceExt;
+use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Clone, Debug)]
 pub struct ShareOpts {
@@ -26,6 +39,95 @@ pub fn resolve(root: &Path, uri_path: &str, opts: &ShareOpts) -> Option<PathBuf>
     }
     let canon = p.canonicalize().ok()?; // also fails for missing files
     canon.starts_with(root).then_some(canon)
+}
+
+pub struct AppState {
+    pub root: PathBuf,
+    pub single_file: bool,
+    pub opts: ShareOpts,
+    pub base: String, // "" or "/s/<token>"
+}
+
+impl AppState {
+    pub fn new(root: PathBuf, single_file: bool, opts: ShareOpts, token: bool) -> Self {
+        let base = if token { format!("/s/{}", gen_token()) } else { String::new() };
+        Self { root, single_file, opts, base }
+    }
+}
+
+pub fn gen_token() -> String {
+    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::thread_rng();
+    (0..12).map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char).collect()
+}
+
+pub fn router(state: Arc<AppState>) -> Router {
+    let inner = Router::new()
+        .route("/", get(handle))
+        .route("/{*path}", get(handle))
+        .with_state(state.clone());
+    if state.base.is_empty() {
+        inner
+    } else {
+        Router::new().nest(&state.base, inner)
+    }
+}
+
+async fn handle(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<HashMap<String, String>>,
+    uri: Uri,
+    req: Request,
+) -> Response {
+    if st.single_file {
+        return serve_single(&st, req).await;
+    }
+
+    let rel = uri.path().trim_start_matches('/').trim_end_matches('/');
+    let Some(path) = resolve(&st.root, uri.path(), &st.opts) else {
+        return not_found();
+    };
+
+    if path.is_dir() {
+        if q.contains_key("zip") {
+            if !st.opts.zip {
+                return not_found();
+            }
+            return crate::zip::zip_response(path, rel.to_string(), st.opts.show_hidden);
+        }
+        let entries = crate::listing::read_dir_entries(&path, st.opts.show_hidden);
+        if q.get("format").map(String::as_str) == Some("json") {
+            return axum::Json(entries).into_response();
+        }
+        return Html(crate::listing::render_html(rel, &entries, &st.base, st.opts.zip))
+            .into_response();
+    }
+
+    // file: delegate to ServeDir for Range/ETag/MIME
+    match ServeDir::new(&st.root).oneshot(req).await {
+        Ok(res) => res.map(Body::new),
+        Err(_) => not_found(),
+    }
+}
+
+async fn serve_single(st: &AppState, req: Request) -> Response {
+    // root is the file itself; serve it for any path
+    let name = st.root.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    match ServeFile::new(&st.root).oneshot(req).await {
+        Ok(res) => {
+            let mut res = res.map(Body::new);
+            let cd = format!("attachment; filename=\"{name}\"");
+            if let Ok(v) = header::HeaderValue::from_str(&cd) {
+                res.headers_mut().insert(header::CONTENT_DISPOSITION, v);
+            }
+            res
+        }
+        Err(_) => not_found(),
+    }
+}
+
+fn not_found() -> Response {
+    (StatusCode::NOT_FOUND, "404 — not found").into_response()
 }
 
 #[cfg(test)]
