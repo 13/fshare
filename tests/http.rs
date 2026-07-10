@@ -13,6 +13,7 @@ async fn spawn(root: PathBuf, token: bool, upload: bool) -> (String, tokio::task
             upload,
             max_upload: None,
         },
+        None,
     )
     .await
 }
@@ -28,6 +29,7 @@ async fn spawn_capped(root: PathBuf, cap: u64) -> (String, tokio::task::JoinHand
             upload: true,
             max_upload: Some(cap),
         },
+        None,
     )
     .await
 }
@@ -36,9 +38,11 @@ async fn spawn_opts(
     root: PathBuf,
     token: bool,
     opts: fshare::server::ShareOpts,
+    auth: Option<String>,
 ) -> (String, tokio::task::JoinHandle<()>) {
     let root = root.canonicalize().unwrap();
-    let state = fshare::server::AppState::new(root, false, opts, token, fshare::log::Logger::spawn(false));
+    let state =
+        fshare::server::AppState::new(root, false, opts, token, fshare::log::Logger::spawn(false), auth);
     let base = state.base.clone();
     let app = fshare::server::router(Arc::new(state));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -150,6 +154,7 @@ async fn counts_completed_downloads() {
         opts,
         false,
         fshare::log::Logger::spawn(false),
+        None,
     ));
     let app = fshare::server::router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -246,6 +251,68 @@ async fn upload_disabled_and_cap() {
     assert_eq!(r.status(), 413);
     assert!(!t.path().join("big.bin").exists());
     assert!(walkdir_all(t.path()).iter().all(|n| !n.contains(".fshare-upload-")));
+}
+
+async fn spawn_auth(root: PathBuf, creds: &str) -> (String, tokio::task::JoinHandle<()>) {
+    spawn_opts(
+        root,
+        false,
+        fshare::server::ShareOpts {
+            show_hidden: false,
+            follow_links: false,
+            zip: true,
+            upload: true,
+            max_upload: None,
+        },
+        Some(creds.to_string()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn basic_auth_gates_all_routes() {
+    let t = fixture();
+    let (base, _h) = spawn_auth(t.path().into(), "ben:secret").await;
+    let c = reqwest::Client::new();
+
+    // no credentials → 401 with prompt header
+    let r = c.get(format!("{base}/")).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+    assert!(r.headers()["www-authenticate"].to_str().unwrap().contains("Basic"));
+
+    // wrong password → 401
+    let r = c
+        .get(format!("{base}/hello.txt"))
+        .basic_auth("ben", Some("wrong"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+
+    // garbage header → 401 not 500
+    let r = c
+        .get(format!("{base}/"))
+        .header("Authorization", "Basic !!!not-base64!!!")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+
+    // correct → 200 listing and file
+    let r = c
+        .get(format!("{base}/hello.txt"))
+        .basic_auth("ben", Some("secret"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "hello world");
+
+    // upload also guarded
+    let part = reqwest::multipart::Part::bytes(b"x".to_vec()).file_name("a.txt");
+    let form = reqwest::multipart::Form::new().part("file", part);
+    let r = c.post(format!("{base}/")).multipart(form).send().await.unwrap();
+    assert_eq!(r.status(), 401);
 }
 
 fn walkdir_all(root: &std::path::Path) -> Vec<String> {

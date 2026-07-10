@@ -1,4 +1,35 @@
+use crate::server::AppState;
+use axum::extract::{Request, State};
+use axum::http::{header, StatusCode};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use base64::Engine;
 use rand::Rng;
+use std::sync::Arc;
+
+pub async fn require(State(st): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+    let Some(expected) = &st.auth else {
+        return next.run(req).await;
+    };
+    let ok = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Basic "))
+        .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
+        .map(|creds| ct_eq(&creds, expected.as_bytes()))
+        .unwrap_or(false);
+    if ok {
+        next.run(req).await
+    } else {
+        (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, r#"Basic realm="fshare""#)],
+            "401 — authentication required",
+        )
+            .into_response()
+    }
+}
 
 const PW_ALPHABET: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
