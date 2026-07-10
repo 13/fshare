@@ -41,6 +41,7 @@ fshare --token              # random /s/<token>/ URL prefix (guessing protection
 fshare --hidden             # also serve dotfiles (hidden by default)
 fshare --no-zip             # disable folder zip downloads
 fshare --no-qr              # skip the QR code
+fshare --no-mdns            # skip fshare.local announcement
 fshare --json-log           # JSON-lines event log for scripting
 fshare --upload             # allow uploads into the browsed folder (drag & drop)
 fshare --upload --max-upload-size 2G
@@ -54,6 +55,7 @@ Extras:
 - `GET /path/?format=json` — machine-readable directory listing
 - `GET /path/?zip` — streamed zip of that folder (no temp files)
 - Range requests supported: browser video seeking and download resume work
+- Announces `http://fshare.local:8000` via mDNS (zero-config, `--no-mdns` to disable)
 - Detects other running fshare instances and shows them at startup
 - Shutdown prints a summary: requests served, unique clients, bytes sent
 
@@ -74,7 +76,6 @@ Extras:
 
 ## Roadmap
 
-- mDNS announcement (`fshare.local`)
 - Optional self-signed TLS
 - Bandwidth limiting
 - Airdrop-style push between fshare instances

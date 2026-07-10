@@ -77,12 +77,12 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let mut found = false;
         while std::time::Instant::now() < deadline {
-            if let Ok(ev) = rx.recv_timeout(std::time::Duration::from_millis(300)) {
-                if let mdns_sd::ServiceEvent::ServiceResolved(info) = ev {
-                    if info.get_fullname().starts_with("fshare on") && info.get_port() == 18999 {
-                        found = true;
-                        break;
-                    }
+            if let Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) =
+                rx.recv_timeout(std::time::Duration::from_millis(300))
+            {
+                if info.get_fullname().starts_with("fshare on") && info.get_port() == 18999 {
+                    found = true;
+                    break;
                 }
             }
         }

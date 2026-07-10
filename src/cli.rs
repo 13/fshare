@@ -62,6 +62,10 @@ pub struct Args {
     /// Require HTTP Basic auth: --auth (generated), --auth=user or --auth=user:pass
     #[arg(long, require_equals = true, value_name = "USER[:PASS]")]
     pub auth: Option<Option<String>>,
+
+    /// Don't announce fshare.local via mDNS
+    #[arg(long)]
+    pub no_mdns: bool,
 }
 
 pub fn parse_size(s: &str) -> Result<u64, String> {

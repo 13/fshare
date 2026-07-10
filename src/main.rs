@@ -67,7 +67,19 @@ async fn async_main(
     let others = instance::others();
     let _guard = instance::register(port, &root)?;
 
-    print_banner(&args, &state, port, bumped, &others, single_file, &root);
+    let _mdns_guard = if args.no_mdns {
+        None
+    } else {
+        match fshare::mdns::announce(port, &state.base) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                println!("  {} mDNS unavailable: {e}", "note:".yellow());
+                None
+            }
+        }
+    };
+
+    print_banner(&args, &state, port, bumped, &others, single_file, &root, _mdns_guard.is_some());
 
     let app = server::router(state.clone());
     let listener = tokio::net::TcpListener::from_std(listener)?;
@@ -112,6 +124,7 @@ fn dir_summary(root: &std::path::Path) -> (u64, u64) {
     (files, bytes)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_banner(
     args: &cli::Args,
     state: &server::AppState,
@@ -120,6 +133,7 @@ fn print_banner(
     others: &[instance::Instance],
     single_file: bool,
     root: &std::path::Path,
+    mdns_on: bool,
 ) {
     let ver = env!("CARGO_PKG_VERSION");
     if single_file {
@@ -138,6 +152,9 @@ fn print_banner(
     }
     println!();
 
+    if mdns_on {
+        println!("  {} http://fshare.local:{port}{}/    (mDNS)", "➜".green(), state.base);
+    }
     let ifaces = net::ranked_ifaces();
     let mut best_url = None;
     for (i, ifc) in ifaces.iter().enumerate() {
