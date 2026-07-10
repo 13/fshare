@@ -42,7 +42,7 @@ async fn spawn_opts(
 ) -> (String, tokio::task::JoinHandle<()>) {
     let root = root.canonicalize().unwrap();
     let state =
-        fshare::server::AppState::new(root, false, opts, token, fshare::log::Logger::spawn(false), auth);
+        fshare::server::AppState::new(root, false, opts, token, fshare::log::Logger::spawn(false), auth, None);
     let base = state.base.clone();
     let app = fshare::server::router(Arc::new(state));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -154,6 +154,7 @@ async fn counts_completed_downloads() {
         opts,
         false,
         fshare::log::Logger::spawn(false),
+        None,
         None,
     ));
     let app = fshare::server::router(state.clone());
@@ -316,6 +317,52 @@ async fn basic_auth_gates_all_routes() {
 }
 
 #[tokio::test]
+async fn bandwidth_limit_slows_downloads() {
+    let t = tempfile::tempdir().unwrap();
+    std::fs::write(t.path().join("blob.bin"), vec![42u8; 64 * 1024]).unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let opts = fshare::server::ShareOpts {
+        show_hidden: false,
+        follow_links: false,
+        zip: true,
+        upload: false,
+        max_upload: None,
+    };
+    // 256 KiB/s over 64 KiB; assert ≥120ms (unthrottled is <20ms)
+    let state = Arc::new(fshare::server::AppState::new(
+        root,
+        false,
+        opts,
+        false,
+        fshare::log::Logger::spawn(false),
+        None,
+        Some(256 * 1024),
+    ));
+    let app = fshare::server::router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+            .await
+            .unwrap();
+    });
+    let start = std::time::Instant::now();
+    let body = reqwest::get(format!("http://{addr}/blob.bin"))
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(body.len(), 64 * 1024);
+    assert!(body.iter().all(|b| *b == 42));
+    assert!(
+        start.elapsed() >= std::time::Duration::from_millis(120),
+        "took {:?} — limiter not applied?",
+        start.elapsed()
+    );
+}
+
+#[tokio::test]
 async fn tls_serves_https() {
     let t = fixture();
     let certdir = tempfile::tempdir().unwrap();
@@ -335,6 +382,7 @@ async fn tls_serves_https() {
         opts,
         false,
         fshare::log::Logger::spawn(false),
+        None,
         None,
     ));
     let app = fshare::server::router(state);

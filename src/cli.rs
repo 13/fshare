@@ -70,6 +70,17 @@ pub struct Args {
     /// Serve HTTPS with a persisted self-signed certificate
     #[arg(long)]
     pub tls: bool,
+
+    /// Cap total download speed, e.g. --limit 5M (bytes/second, all clients combined)
+    #[arg(long, value_parser = parse_limit)]
+    pub limit: Option<u64>,
+}
+
+fn parse_limit(s: &str) -> Result<u64, String> {
+    match parse_size(s)? {
+        0 => Err("limit must be > 0".into()),
+        n => Ok(n),
+    }
 }
 
 pub fn parse_size(s: &str) -> Result<u64, String> {

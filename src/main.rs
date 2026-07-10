@@ -61,6 +61,7 @@ async fn async_main(
         args.token,
         events,
         auth,
+        args.limit,
     ));
 
     let others = instance::others();
@@ -246,6 +247,13 @@ fn print_banner(
     }
     if args.token {
         println!("  {} URLs above include the access token", "note:".yellow());
+    }
+    if let Some(l) = args.limit {
+        println!(
+            "  {} download speed limited to {}/s",
+            "note:".yellow(),
+            fshare::listing::human_size(l)
+        );
     }
     if let Some(a) = &state.auth {
         let (user, pass) = a.split_once(':').unwrap_or((a.as_str(), ""));

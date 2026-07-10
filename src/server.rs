@@ -61,6 +61,7 @@ pub struct AppState {
     pub downloads_done: Arc<AtomicU64>,
     pub download_signal: Arc<tokio::sync::Notify>,
     pub auth: Option<String>, // "user:pass"
+    pub limiter: Option<async_speed_limit::Limiter>,
 }
 
 impl AppState {
@@ -71,6 +72,7 @@ impl AppState {
         token: bool,
         events: tokio::sync::mpsc::UnboundedSender<crate::log::Event>,
         auth: Option<String>,
+        limit: Option<u64>,
     ) -> Self {
         let base = if token { format!("/s/{}", gen_token()) } else { String::new() };
         Self {
@@ -83,6 +85,7 @@ impl AppState {
             downloads_done: Arc::default(),
             download_signal: Arc::default(),
             auth,
+            limiter: limit.map(|n| async_speed_limit::Limiter::new(n as f64)),
         }
     }
 }
@@ -233,6 +236,65 @@ where
     }
 }
 
+type ConsumeFut = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+pin_project! {
+    /// Rate-limits a body by holding each data frame back until the shared
+    /// token bucket grants its byte count. The delay happens BEFORE the
+    /// frame is yielded: hyper stops polling known-length bodies after the
+    /// final frame, so throttling after the yield would never fire for it.
+    pub struct ThrottledBody<B> {
+        #[pin]
+        inner: B,
+        limiter: async_speed_limit::Limiter,
+        pending: Option<(ConsumeFut, http_body::Frame<Bytes>)>,
+    }
+}
+
+impl<B> http_body::Body for ThrottledBody<B>
+where
+    B: http_body::Body<Data = Bytes>,
+{
+    type Data = Bytes;
+    type Error = B::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Bytes>, B::Error>>> {
+        let this = self.project();
+        if let Some((fut, _)) = this.pending {
+            match fut.as_mut().poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(()) => {
+                    let (_, frame) = this.pending.take().expect("pending present");
+                    return Poll::Ready(Some(Ok(frame)));
+                }
+            }
+        }
+        match ready!(this.inner.poll_frame(cx)) {
+            Some(Ok(frame)) => {
+                let Some(d) = frame.data_ref() else {
+                    return Poll::Ready(Some(Ok(frame)));
+                };
+                let limiter = this.limiter.clone();
+                let n = d.len();
+                let mut fut: ConsumeFut = Box::pin(async move {
+                    limiter.consume(n).await;
+                });
+                match fut.as_mut().poll(cx) {
+                    Poll::Ready(()) => Poll::Ready(Some(Ok(frame))),
+                    Poll::Pending => {
+                        *this.pending = Some((fut, frame));
+                        Poll::Pending
+                    }
+                }
+            }
+            other => Poll::Ready(other),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Stats {
     pub requests: AtomicU64,
@@ -296,7 +358,12 @@ pub async fn track(
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok());
+    let limiter = st.limiter.clone();
     res.map(|b| {
+        let b = match limiter {
+            Some(l) => Body::new(ThrottledBody { inner: b, limiter: l, pending: None }),
+            None => Body::new(b),
+        };
         Body::new(CountingBody { inner: b, sent: 0, expected, done: false, on_end: Some(on_end) })
     })
 }

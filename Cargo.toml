@@ -34,6 +34,7 @@ rcgen = "0.14.8"
 sha2 = "0.11.0"
 time = "0.3.53"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+async-speed-limit = "0.4.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
