@@ -50,6 +50,10 @@ async fn async_main(
         upload: args.upload && !single_file,
         max_upload: args.max_upload_size,
     };
+    let auth = match &args.auth {
+        Some(v) => Some(fshare::auth::parse_auth(v)?),
+        None => None,
+    };
     let events = flog::Logger::spawn(args.json_log);
     let state = Arc::new(server::AppState::new(
         root.clone(),
@@ -57,6 +61,7 @@ async fn async_main(
         opts,
         args.token,
         events,
+        auth,
     ));
 
     let others = instance::others();
@@ -175,6 +180,21 @@ fn print_banner(
     }
     if args.token {
         println!("  {} URLs above include the access token", "note:".yellow());
+    }
+    if let Some(a) = &state.auth {
+        let (user, pass) = a.split_once(':').unwrap_or((a.as_str(), ""));
+        let explicit = matches!(
+            args.auth.as_ref().and_then(|v| v.as_ref()),
+            Some(v) if v.contains(':')
+        );
+        if explicit {
+            println!("  {} auth enabled (user {user})", "note:".yellow());
+        } else {
+            println!(
+                "  {} auth enabled — user: {user}  password: {pass}",
+                "note:".yellow()
+            );
+        }
     }
     println!("  Ctrl+C to stop\n");
 }

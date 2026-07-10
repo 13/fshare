@@ -58,6 +58,10 @@ pub struct Args {
     /// Reject uploads larger than this, e.g. 500M, 2G (default unlimited)
     #[arg(long, value_parser = parse_size)]
     pub max_upload_size: Option<u64>,
+
+    /// Require HTTP Basic auth: --auth (generated), --auth=user or --auth=user:pass
+    #[arg(long, require_equals = true, value_name = "USER[:PASS]")]
+    pub auth: Option<Option<String>>,
 }
 
 pub fn parse_size(s: &str) -> Result<u64, String> {

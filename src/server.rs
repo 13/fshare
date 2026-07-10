@@ -60,6 +60,7 @@ pub struct AppState {
     pub stats: Arc<Stats>,
     pub downloads_done: Arc<AtomicU64>,
     pub download_signal: Arc<tokio::sync::Notify>,
+    pub auth: Option<String>, // "user:pass"
 }
 
 impl AppState {
@@ -69,6 +70,7 @@ impl AppState {
         opts: ShareOpts,
         token: bool,
         events: tokio::sync::mpsc::UnboundedSender<crate::log::Event>,
+        auth: Option<String>,
     ) -> Self {
         let base = if token { format!("/s/{}", gen_token()) } else { String::new() };
         Self {
@@ -80,6 +82,7 @@ impl AppState {
             stats: Arc::default(),
             downloads_done: Arc::default(),
             download_signal: Arc::default(),
+            auth,
         }
     }
 }
@@ -99,7 +102,9 @@ pub fn router(state: Arc<AppState>) -> Router {
     } else {
         Router::new().route("/", get(handle)).route("/{*path}", get(handle))
     };
+    // layer order: last added = outermost, so auth runs inside track and 401s get logged
     let inner = inner
+        .layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::require))
         .layer(axum::middleware::from_fn_with_state(state.clone(), track))
         .with_state(state.clone());
     if state.base.is_empty() {
