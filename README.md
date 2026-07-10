@@ -44,6 +44,8 @@ fshare --no-qr              # skip the QR code
 fshare --json-log           # JSON-lines event log for scripting
 fshare --upload             # allow uploads into the browsed folder (drag & drop)
 fshare --upload --max-upload-size 2G
+fshare --auth               # basic auth, generated password shown in banner
+fshare --auth=ben:secret    # explicit credentials
 fshare --follow-links       # allow symlinks leaving the shared root (off by default)
 ```
 
@@ -64,12 +66,14 @@ Extras:
 - Path traversal blocked: every request is resolved and must stay inside the
   shared root; symlinks pointing outside are refused unless `--follow-links`.
 - Dotfiles are hidden from listings *and* direct fetch unless `--hidden`.
-- `--token` protects against casual URL guessing on shared networks. It is
-  not authentication; treat anything shared on a hostile LAN as public.
+- `--token` protects against casual URL guessing on shared networks; it is
+  not authentication.
+- `--auth` adds HTTP Basic authentication (constant-time verified). Note:
+  credentials travel base64-encoded over plain HTTP — fine for a trusted
+  LAN, use a VPN/tunnel beyond that.
 
 ## Roadmap
 
-- Basic auth (`--user` / `--pass`)
 - mDNS announcement (`fshare.local`)
 - Optional self-signed TLS
 - Bandwidth limiting
