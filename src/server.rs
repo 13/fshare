@@ -135,8 +135,14 @@ async fn handle(
         if q.get("format").map(String::as_str) == Some("json") {
             return axum::Json(entries).into_response();
         }
-        return Html(crate::listing::render_html(rel, &entries, &st.base, st.opts.zip))
-            .into_response();
+        return Html(crate::listing::render_html(
+            rel,
+            &entries,
+            &st.base,
+            st.opts.zip,
+            st.opts.upload,
+        ))
+        .into_response();
     }
 
     // file: delegate to ServeDir for Range/ETag/MIME
