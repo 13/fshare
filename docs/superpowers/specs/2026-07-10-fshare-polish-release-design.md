@@ -33,12 +33,11 @@ Unit tests cover one of each class plus fallback + case-insensitivity.
 
 ## 2. Logo
 
-- `assets/logo.svg`: hand-written geometric SVG — flat folder silhouette,
-  three concentric quarter-arcs radiating from the folder (share/broadcast
-  motif), primary color `#0b6cff`, no text, square viewBox, legible at 16px.
-- README top: `<img src="assets/logo.svg" width="96">` beside the title.
-- Listing template gains an inline data-URI SVG favicon of the same mark
-  (base64 of a simplified variant embedded directly in `listing.html`).
+- User-provided: `assets/fshare.svg` + `assets/fshare.png` (parachute
+  delivering a package) — commit as-is, no generation.
+- README top: `<img src="assets/fshare.svg" width="96">` beside the title.
+- Listing template gains a favicon: base64 data-URI of `assets/fshare.svg`
+  embedded in `listing.html` (`<link rel="icon" type="image/svg+xml" ...>`).
 
 ## 3. build.sh (repo root, executable)
 
