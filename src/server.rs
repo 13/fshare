@@ -27,6 +27,8 @@ pub struct ShareOpts {
     pub show_hidden: bool,
     pub follow_links: bool,
     pub zip: bool,
+    pub upload: bool,
+    pub max_upload: Option<u64>,
 }
 
 /// root MUST be canonicalized by the caller (done once at startup).
@@ -89,9 +91,15 @@ pub fn gen_token() -> String {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    let inner = Router::new()
-        .route("/", get(handle))
-        .route("/{*path}", get(handle))
+    let inner = if state.opts.upload {
+        Router::new()
+            .route("/", get(handle).post(crate::upload::handle))
+            .route("/{*path}", get(handle).post(crate::upload::handle))
+            .layer(axum::extract::DefaultBodyLimit::disable())
+    } else {
+        Router::new().route("/", get(handle)).route("/{*path}", get(handle))
+    };
+    let inner = inner
         .layer(axum::middleware::from_fn_with_state(state.clone(), track))
         .with_state(state.clone());
     if state.base.is_empty() {
@@ -315,7 +323,13 @@ mod tests {
     }
 
     fn opts() -> ShareOpts {
-        ShareOpts { show_hidden: false, follow_links: false, zip: true }
+        ShareOpts {
+            show_hidden: false,
+            follow_links: false,
+            zip: true,
+            upload: false,
+            max_upload: None,
+        }
     }
 
     #[test]
