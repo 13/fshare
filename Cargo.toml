@@ -30,6 +30,7 @@ futures = "0.3"
 html-escape = "0.2"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
 reqwest = { version = "0.12", features = ["json"] }
 tempfile = "3"
 zip = "2"
