@@ -5,4 +5,5 @@ pub mod listing;
 pub mod log;
 pub mod net;
 pub mod server;
+pub mod upload;
 pub mod zip;

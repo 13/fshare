@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 pub enum Event {
     Request { ip: IpAddr, method: String, path: String, status: u16 },
     Done { ip: IpAddr, path: String, bytes: u64, completed: bool, secs: f64 },
+    Upload { ip: IpAddr, name: String, bytes: u64, secs: f64 },
 }
 
 pub fn format_pretty(e: &Event) -> String {
@@ -30,6 +31,13 @@ pub fn format_pretty(e: &Event) -> String {
         Event::Done { ip, path, bytes, completed: false, .. } => {
             format!("{ts}  {ip:15}  {} {path} canceled at {}", "✗".red(), human_size(*bytes))
         }
+        Event::Upload { ip, name, bytes, secs } => {
+            format!(
+                "{ts}  {ip:15}  {} {name} received  {} in {secs:.0}s",
+                "⬆".cyan(),
+                human_size(*bytes)
+            )
+        }
     }
 }
 
@@ -41,6 +49,9 @@ fn format_json(e: &Event) -> String {
         Event::Done { ip, path, bytes, completed, secs } => json!({
             "event": if *completed { "download_complete" } else { "download_canceled" },
             "ip": ip, "path": path, "bytes": bytes, "seconds": secs
+        }),
+        Event::Upload { ip, name, bytes, secs } => json!({
+            "event": "upload", "ip": ip, "name": name, "bytes": bytes, "seconds": secs
         }),
     }
     .to_string()
@@ -59,7 +70,7 @@ impl Logger {
                     continue;
                 }
                 let ip = match &e {
-                    Event::Request { ip, .. } | Event::Done { ip, .. } => *ip,
+                    Event::Request { ip, .. } | Event::Done { ip, .. } | Event::Upload { ip, .. } => *ip,
                 };
                 let host = lookup_cached(&cache, ip).await;
                 let mut line = format_pretty(&e);
@@ -121,5 +132,17 @@ mod tests {
             secs: 1.0,
         });
         assert!(c.contains("✗") && c.contains("canceled"));
+    }
+
+    #[test]
+    fn formats_upload() {
+        let ip = "192.168.1.23".parse().unwrap();
+        let u = format_pretty(&Event::Upload {
+            ip,
+            name: "photo.jpg".into(),
+            bytes: 4 * 1024 * 1024,
+            secs: 3.0,
+        });
+        assert!(u.contains("⬆") && u.contains("photo.jpg") && u.contains("4.0 MB"));
     }
 }

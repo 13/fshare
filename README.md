@@ -42,6 +42,8 @@ fshare --hidden             # also serve dotfiles (hidden by default)
 fshare --no-zip             # disable folder zip downloads
 fshare --no-qr              # skip the QR code
 fshare --json-log           # JSON-lines event log for scripting
+fshare --upload             # allow uploads into the browsed folder (drag & drop)
+fshare --upload --max-upload-size 2G
 fshare --follow-links       # allow symlinks leaving the shared root (off by default)
 ```
 
@@ -55,16 +57,18 @@ Extras:
 
 ## Security notes
 
-- Read-only by construction — no write endpoints exist.
+- Read-only by construction — no write endpoints exist unless `--upload`.
+- Uploads are opt-in (`--upload`); filenames are sanitized to their final
+  component, collisions never overwrite (auto-rename), size capped with
+  `--max-upload-size`.
 - Path traversal blocked: every request is resolved and must stay inside the
   shared root; symlinks pointing outside are refused unless `--follow-links`.
 - Dotfiles are hidden from listings *and* direct fetch unless `--hidden`.
 - `--token` protects against casual URL guessing on shared networks. It is
   not authentication; treat anything shared on a hostile LAN as public.
 
-## Roadmap (phase 2)
+## Roadmap
 
-- `--upload` drag-and-drop upload page
 - Basic auth (`--user` / `--pass`)
 - mDNS announcement (`fshare.local`)
 - Optional self-signed TLS

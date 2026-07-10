@@ -52,7 +52,57 @@ fn enc(seg: &str) -> String {
     percent_encoding::utf8_percent_encode(seg, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
 
-pub fn render_html(rel_path: &str, entries: &[Entry], base: &str, zip: bool) -> String {
+const UPLOAD_BLOCK: &str = r#"<div id="dropzone" style="border:2px dashed var(--line);border-radius:8px;padding:1em;text-align:center;color:var(--muted);margin-bottom:1rem;cursor:pointer">
+  drop files here or click to upload
+  <input type="file" id="fpick" multiple style="display:none">
+  <div id="uplist"></div>
+</div>
+<script>
+(() => {
+  const dz = document.getElementById('dropzone');
+  const fp = document.getElementById('fpick');
+  const list = document.getElementById('uplist');
+  dz.onclick = () => fp.click();
+  fp.onchange = () => sendAll(fp.files);
+  ['dragover','dragenter'].forEach(ev => document.addEventListener(ev, e => {
+    e.preventDefault(); dz.style.borderColor = 'var(--accent)';
+  }));
+  ['dragleave','drop'].forEach(ev => document.addEventListener(ev, e => {
+    e.preventDefault(); dz.style.borderColor = 'var(--line)';
+  }));
+  document.addEventListener('drop', e => sendAll(e.dataTransfer.files));
+  function sendAll(files) {
+    let pending = files.length;
+    [...files].forEach(f => {
+      const row = document.createElement('div');
+      row.textContent = f.name + ' 0%';
+      list.appendChild(row);
+      const fd = new FormData();
+      fd.append('file', f);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', location.pathname);
+      xhr.setRequestHeader('Accept', 'application/json');
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) row.textContent = f.name + ' ' + Math.round(100*e.loaded/e.total) + '%';
+      };
+      xhr.onload = () => {
+        row.textContent = f.name + (xhr.status < 300 ? ' ✓' : ' ✗ ' + xhr.responseText);
+        if (--pending === 0 && xhr.status < 300) location.reload();
+      };
+      xhr.onerror = () => { row.textContent = f.name + ' ✗ network error'; --pending; };
+      xhr.send(fd);
+    });
+  }
+})();
+</script>"#;
+
+pub fn render_html(
+    rel_path: &str,
+    entries: &[Entry],
+    base: &str,
+    zip: bool,
+    upload: bool,
+) -> String {
     let template = include_str!("listing.html");
 
     // breadcrumbs: root link + each path segment
@@ -114,6 +164,7 @@ pub fn render_html(rel_path: &str, entries: &[Entry], base: &str, zip: bool) -> 
         )
         .replace("{{crumbs}}", &crumbs)
         .replace("{{zip}}", &zip_btn)
+        .replace("{{upload}}", if upload { UPLOAD_BLOCK } else { "" })
         .replace("{{rows}}", &rows)
 }
 
@@ -148,12 +199,20 @@ mod tests {
             Entry { name: "sub dir".into(), is_dir: true, size: 0, mtime: 0 },
             Entry { name: "a<b.txt".into(), is_dir: false, size: 5, mtime: 0 },
         ];
-        let html = render_html("docs/x", &entries, "", true);
+        let html = render_html("docs/x", &entries, "", true, false);
         assert!(html.contains("sub%20dir/")); // percent-encoded href
         assert!(html.contains("a&lt;b.txt")); // escaped display name
         assert!(html.contains("?zip")); // zip button
         assert!(html.contains("docs")); // breadcrumb
-        let noz = render_html("", &entries, "", false);
+        let noz = render_html("", &entries, "", false, false);
         assert!(!noz.contains("?zip"));
+    }
+
+    #[test]
+    fn upload_ui_gated() {
+        let html = render_html("", &[], "", false, true);
+        assert!(html.contains("dropzone") && html.contains("XMLHttpRequest"));
+        let none = render_html("", &[], "", false, false);
+        assert!(!none.contains("dropzone"));
     }
 }

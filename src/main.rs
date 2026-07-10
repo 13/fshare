@@ -47,6 +47,8 @@ async fn async_main(
         show_hidden: args.hidden,
         follow_links: args.follow_links,
         zip: !args.no_zip && !single_file,
+        upload: args.upload && !single_file,
+        max_upload: args.max_upload_size,
     };
     let events = flog::Logger::spawn(args.json_log);
     let state = Arc::new(server::AppState::new(
