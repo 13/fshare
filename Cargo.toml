@@ -29,6 +29,7 @@ http-body = "1"
 bytes = "1"
 futures = "0.3"
 html-escape = "0.2"
+mdns-sd = "0.20.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

@@ -4,6 +4,7 @@ pub mod expiry;
 pub mod instance;
 pub mod listing;
 pub mod log;
+pub mod mdns;
 pub mod net;
 pub mod server;
 pub mod upload;
