@@ -48,6 +48,29 @@ pub fn human_size(bytes: u64) -> String {
     }
 }
 
+pub fn icon_for(name: &str, is_dir: bool) -> &'static str {
+    if is_dir {
+        return "📁";
+    }
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" | "heic" => {
+            "🖼️"
+        }
+        "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" => "🎬",
+        "mp3" | "flac" | "ogg" | "wav" | "m4a" | "opus" | "aac" => "🎵",
+        "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "zst" | "7z" | "rar" => "📦",
+        "pdf" | "epub" | "mobi" => "📕",
+        "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "c" | "h" | "cpp" | "hpp" | "go" | "java"
+        | "kt" | "rb" | "php" | "sh" | "zsh" | "lua" | "sql" | "html" | "css" | "json"
+        | "yaml" | "yml" | "toml" | "xml" => "💻",
+        "md" | "txt" | "rst" | "org" | "log" => "📝",
+        "bin" | "so" | "exe" | "dll" | "deb" | "rpm" | "appimage" | "iso" | "img" => "⚙️",
+        "pem" | "key" | "crt" | "pub" | "asc" | "gpg" => "🔑",
+        _ => "📄",
+    }
+}
+
 fn enc(seg: &str) -> String {
     percent_encoding::utf8_percent_encode(seg, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
@@ -135,10 +158,11 @@ pub fn render_html(
     for e in entries {
         let name_enc = enc(&e.name);
         let name_disp = html_escape::encode_text(&e.name);
-        let (href, icon, size, sort_size) = if e.is_dir {
-            (format!("{dir_url}/{name_enc}/"), "📁", String::new(), 0)
+        let icon = icon_for(&e.name, e.is_dir);
+        let (href, size, sort_size) = if e.is_dir {
+            (format!("{dir_url}/{name_enc}/"), String::new(), 0)
         } else {
-            (format!("{dir_url}/{name_enc}"), "📄", human_size(e.size), e.size)
+            (format!("{dir_url}/{name_enc}"), human_size(e.size), e.size)
         };
         let date = chrono::DateTime::from_timestamp(e.mtime, 0)
             .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
@@ -206,6 +230,22 @@ mod tests {
         assert!(html.contains("docs")); // breadcrumb
         let noz = render_html("", &entries, "", false, false);
         assert!(!noz.contains("?zip"));
+    }
+
+    #[test]
+    fn icons_by_extension() {
+        assert_eq!(icon_for("x", true), "📁");
+        assert_eq!(icon_for("a.PNG", false), "🖼️");
+        assert_eq!(icon_for("m.mkv", false), "🎬");
+        assert_eq!(icon_for("s.flac", false), "🎵");
+        assert_eq!(icon_for("z.tar", false), "📦");
+        assert_eq!(icon_for("d.pdf", false), "📕");
+        assert_eq!(icon_for("c.rs", false), "💻");
+        assert_eq!(icon_for("n.md", false), "📝");
+        assert_eq!(icon_for("b.iso", false), "⚙️");
+        assert_eq!(icon_for("k.pem", false), "🔑");
+        assert_eq!(icon_for("unknown.qqq", false), "📄");
+        assert_eq!(icon_for("noext", false), "📄");
     }
 
     #[test]
