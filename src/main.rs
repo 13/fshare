@@ -1,5 +1,6 @@
 mod cli;
 mod instance;
+mod listing;
 mod net;
 mod server;
 use clap::Parser;

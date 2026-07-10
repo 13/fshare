@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fshare — {{title}}</title>
+<style>
+:root { --bg:#fff; --fg:#1a1a1a; --muted:#777; --line:#e5e5e5; --accent:#0b6cff; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#121212; --fg:#e8e8e8; --muted:#999; --line:#2a2a2a; --accent:#5aa2ff; }
+}
+* { box-sizing:border-box }
+body { margin:0 auto; max-width:56rem; padding:1.5rem 1rem; background:var(--bg);
+  color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
+header { display:flex; justify-content:space-between; align-items:baseline;
+  gap:1rem; flex-wrap:wrap; margin-bottom:1rem; }
+a { color:var(--accent); text-decoration:none } a:hover { text-decoration:underline }
+.zip { font-size:.9em; border:1px solid var(--line); border-radius:6px; padding:.3em .7em }
+table { width:100%; border-collapse:collapse }
+th { text-align:left; cursor:pointer; user-select:none; color:var(--muted);
+  font-weight:600; font-size:.85em; padding:.4em .5em; border-bottom:1px solid var(--line) }
+td { padding:.35em .5em; border-bottom:1px solid var(--line) }
+td.s, th.s { text-align:right; white-space:nowrap; color:var(--muted) }
+td.d, th.d { text-align:right; white-space:nowrap; color:var(--muted); font-size:.9em }
+@media (max-width:480px){ td.d, th.d { display:none } }
+</style>
+<header>
+  <nav>{{crumbs}}</nav>
+  {{zip}}
+</header>
+<table id="t">
+  <thead><tr><th data-k="0">Name</th><th class="s" data-k="1">Size</th><th class="d" data-k="2">Modified</th></tr></thead>
+  <tbody>{{rows}}</tbody>
+</table>
+<script>
+document.querySelectorAll('th').forEach(th => th.onclick = () => {
+  const k = +th.dataset.k, tb = document.querySelector('#t tbody');
+  const dir = th.dataset.dir = th.dataset.dir === 'a' ? 'd' : 'a';
+  [...tb.rows].sort((a, b) => {
+    const [x, y] = [a, b].map(r => r.cells[k]?.dataset.s ?? r.cells[k]?.textContent ?? '');
+    const n = (+x || +y) ? (+x) - (+y) : x.localeCompare(y);
+    return dir === 'a' ? n : -n;
+  }).forEach(r => tb.appendChild(r));
+});
+</script>
