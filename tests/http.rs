@@ -81,6 +81,26 @@ async fn blocks_traversal_and_dotfiles() {
 }
 
 #[tokio::test]
+async fn zip_download_streams_valid_zip() {
+    let t = fixture();
+    let (base, _h) = spawn(t.path().into(), false).await;
+    let r = reqwest::get(format!("{base}/?zip")).await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r.headers()["content-type"].to_str().unwrap().contains("zip"));
+    let bytes = r.bytes().await.unwrap();
+    let mut ar = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
+    let names: Vec<String> =
+        (0..ar.len()).map(|i| ar.by_index(i).unwrap().name().to_string()).collect();
+    assert!(names.contains(&"hello.txt".to_string()));
+    assert!(names.contains(&"sub/x.bin".to_string()));
+    assert!(!names.iter().any(|n| n.contains(".hidden")));
+    let mut f = ar.by_name("hello.txt").unwrap();
+    let mut s = String::new();
+    std::io::Read::read_to_string(&mut f, &mut s).unwrap();
+    assert_eq!(s, "hello world");
+}
+
+#[tokio::test]
 async fn token_gates_everything() {
     let t = fixture();
     let (base, _h) = spawn(t.path().into(), true).await;
