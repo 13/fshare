@@ -5,7 +5,7 @@ use std::sync::Arc;
 async fn spawn(root: PathBuf, token: bool) -> (String, tokio::task::JoinHandle<()>) {
     let root = root.canonicalize().unwrap();
     let opts = fshare::server::ShareOpts { show_hidden: false, follow_links: false, zip: true };
-    let state = fshare::server::AppState::new(root, false, opts, token);
+    let state = fshare::server::AppState::new(root, false, opts, token, fshare::log::Logger::spawn(false));
     let base = state.base.clone();
     let app = fshare::server::router(Arc::new(state));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -98,6 +98,35 @@ async fn zip_download_streams_valid_zip() {
     let mut s = String::new();
     std::io::Read::read_to_string(&mut f, &mut s).unwrap();
     assert_eq!(s, "hello world");
+}
+
+#[tokio::test]
+async fn counts_completed_downloads() {
+    let t = fixture();
+    let root = t.path().canonicalize().unwrap();
+    let opts = fshare::server::ShareOpts { show_hidden: false, follow_links: false, zip: true };
+    let state = Arc::new(fshare::server::AppState::new(
+        root,
+        false,
+        opts,
+        false,
+        fshare::log::Logger::spawn(false),
+    ));
+    let app = fshare::server::router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+            .await
+            .unwrap();
+    });
+    reqwest::get(format!("http://{addr}/hello.txt")).await.unwrap().bytes().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(state.downloads_done.load(std::sync::atomic::Ordering::Relaxed), 1);
+    // listing does not count
+    reqwest::get(format!("http://{addr}/")).await.unwrap().text().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(state.downloads_done.load(std::sync::atomic::Ordering::Relaxed), 1);
 }
 
 #[tokio::test]

@@ -1,16 +1,24 @@
 use axum::{
     body::Body,
-    extract::{Query, Request, State},
+    extract::{ConnectInfo, Query, Request, State},
     http::{header, StatusCode, Uri},
+    middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
+use bytes::Bytes;
 use percent_encoding::percent_decode_str;
+use pin_project_lite::pin_project;
 use rand::Rng;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::task::{ready, Context, Poll};
+use std::time::Instant;
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -46,12 +54,31 @@ pub struct AppState {
     pub single_file: bool,
     pub opts: ShareOpts,
     pub base: String, // "" or "/s/<token>"
+    pub events: tokio::sync::mpsc::UnboundedSender<crate::log::Event>,
+    pub stats: Arc<Stats>,
+    pub downloads_done: Arc<AtomicU64>,
+    pub download_signal: Arc<tokio::sync::Notify>,
 }
 
 impl AppState {
-    pub fn new(root: PathBuf, single_file: bool, opts: ShareOpts, token: bool) -> Self {
+    pub fn new(
+        root: PathBuf,
+        single_file: bool,
+        opts: ShareOpts,
+        token: bool,
+        events: tokio::sync::mpsc::UnboundedSender<crate::log::Event>,
+    ) -> Self {
         let base = if token { format!("/s/{}", gen_token()) } else { String::new() };
-        Self { root, single_file, opts, base }
+        Self {
+            root,
+            single_file,
+            opts,
+            base,
+            events,
+            stats: Arc::default(),
+            downloads_done: Arc::default(),
+            download_signal: Arc::default(),
+        }
     }
 }
 
@@ -65,6 +92,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     let inner = Router::new()
         .route("/", get(handle))
         .route("/{*path}", get(handle))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), track))
         .with_state(state.clone());
     if state.base.is_empty() {
         inner
@@ -128,6 +156,146 @@ async fn serve_single(st: &AppState, req: Request) -> Response {
 
 fn not_found() -> Response {
     (StatusCode::NOT_FOUND, "404 — not found").into_response()
+}
+
+pin_project! {
+    pub struct CountingBody<B> {
+        #[pin]
+        inner: B,
+        sent: u64,
+        // known Content-Length; hyper may drop a body after the final frame
+        // without polling to None, so "all bytes sent" also counts as complete
+        expected: Option<u64>,
+        done: bool,
+        on_end: Option<Box<dyn FnOnce(u64, bool) + Send + 'static>>,
+    }
+
+    impl<B> PinnedDrop for CountingBody<B> {
+        fn drop(this: Pin<&mut Self>) {
+            let this = this.project();
+            if !*this.done {
+                if let Some(f) = this.on_end.take() {
+                    let complete = this.expected.is_some_and(|e| *this.sent >= e);
+                    f(*this.sent, complete);
+                }
+            }
+        }
+    }
+}
+
+impl<B> http_body::Body for CountingBody<B>
+where
+    B: http_body::Body<Data = Bytes>,
+{
+    type Data = Bytes;
+    type Error = B::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Bytes>, B::Error>>> {
+        let this = self.project();
+        match ready!(this.inner.poll_frame(cx)) {
+            Some(Ok(frame)) => {
+                if let Some(d) = frame.data_ref() {
+                    *this.sent += d.len() as u64;
+                }
+                Poll::Ready(Some(Ok(frame)))
+            }
+            Some(Err(e)) => Poll::Ready(Some(Err(e))),
+            None => {
+                *this.done = true;
+                if let Some(f) = this.on_end.take() {
+                    f(*this.sent, true);
+                }
+                Poll::Ready(None)
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Stats {
+    pub requests: AtomicU64,
+    pub bytes: AtomicU64,
+    pub clients: std::sync::Mutex<std::collections::HashSet<std::net::IpAddr>>,
+}
+
+pub async fn track(
+    State(st): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let ip = addr.ip();
+    let method = req.method().to_string();
+    let path = req.uri().path().to_string();
+    let is_file_get = method == "GET"
+        && !path.ends_with('/')
+        && req.uri().query().is_none_or(|q| !q.contains("format="));
+
+    let start = Instant::now();
+    let res = next.run(req).await;
+    let status = res.status().as_u16();
+
+    st.stats.requests.fetch_add(1, Ordering::Relaxed);
+    st.stats.clients.lock().unwrap().insert(ip);
+    let _ = st.events.send(crate::log::Event::Request {
+        ip,
+        method,
+        path: path.clone(),
+        status,
+    });
+
+    // wrap body of successful file/zip responses to detect completion
+    let track_body = status == 200 || status == 206;
+    if !(track_body && is_download(is_file_get, &res)) {
+        return res;
+    }
+
+    let st2 = st.clone();
+    let events = st.events.clone();
+    // 206 = resumed/partial transfer; log it but don't count toward --max-downloads
+    let counts_as_download = status == 200;
+    let on_end = Box::new(move |bytes: u64, completed: bool| {
+        st2.stats.bytes.fetch_add(bytes, Ordering::Relaxed);
+        if completed && counts_as_download {
+            // increment before notify so expiry's recheck sees the final count
+            st2.downloads_done.fetch_add(1, Ordering::Relaxed);
+            st2.download_signal.notify_waiters();
+        }
+        let _ = events.send(crate::log::Event::Done {
+            ip,
+            path,
+            bytes,
+            completed,
+            secs: start.elapsed().as_secs_f64(),
+        });
+    });
+    let expected = res
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok());
+    res.map(|b| {
+        Body::new(CountingBody { inner: b, sent: 0, expected, done: false, on_end: Some(on_end) })
+    })
+}
+
+fn is_download(is_file_get: bool, res: &Response) -> bool {
+    let is_html = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.contains("text/html"))
+        .unwrap_or(false);
+    let is_zip = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.contains("zip"))
+        .unwrap_or(false);
+    is_zip || (is_file_get && !is_html)
 }
 
 #[cfg(test)]
