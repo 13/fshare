@@ -1,6 +1,9 @@
+<img src="assets/logo.svg" width="96" align="left">
+
 # fshare
 
 Modern LAN file sharing over HTTP — a better `python3 -m http.server`.
+<br clear="left">
 
 Run it in any directory; get shareable URLs (LAN addresses first), a QR code
 for phones, a live log of who connects and what they download, streamed zip
