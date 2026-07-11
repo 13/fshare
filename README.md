@@ -25,6 +25,14 @@ downloads of whole folders, and temporary-sharing controls.
 
 ## Install
 
+One-liner (latest release binary into `~/.local/bin`, x86_64 or aarch64):
+
+```bash
+mkdir -p ~/.local/bin && curl -sL $(curl -s https://api.github.com/repos/13/fshare/releases/latest | grep -o "https://[^\"]*$(uname -m)-unknown-linux-musl\.tar\.gz") | tar xz -C ~/.local/bin fshare
+```
+
+From source:
+
 ```bash
 cargo install --path .        # from source
 ./build.sh                    # release tarballs into dist/
