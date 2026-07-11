@@ -127,7 +127,9 @@ async fn handle(
         return serve_single(&st, req).await;
     }
 
-    let rel = uri.path().trim_start_matches('/').trim_end_matches('/');
+    let rel_raw = uri.path().trim_start_matches('/').trim_end_matches('/');
+    // decoded for display (breadcrumbs/title); resolve() decodes separately
+    let rel = percent_decode_str(rel_raw).decode_utf8_lossy().into_owned();
     let Some(path) = resolve(&st.root, uri.path(), &st.opts) else {
         return not_found();
     };
@@ -137,14 +139,14 @@ async fn handle(
             if !st.opts.zip {
                 return not_found();
             }
-            return crate::zip::zip_response(path, rel.to_string(), st.opts.show_hidden);
+            return crate::zip::zip_response(path, rel.clone(), st.opts.show_hidden);
         }
         let entries = crate::listing::read_dir_entries(&path, st.opts.show_hidden);
         if q.get("format").map(String::as_str) == Some("json") {
             return axum::Json(entries).into_response();
         }
         return Html(crate::listing::render_html(
-            rel,
+            &rel,
             &entries,
             &st.base,
             st.opts.zip,

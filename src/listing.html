@@ -15,6 +15,8 @@ header { display:flex; justify-content:space-between; align-items:baseline;
   gap:1rem; flex-wrap:wrap; margin-bottom:1rem; }
 a { color:var(--accent); text-decoration:none } a:hover { text-decoration:underline }
 .logo { width:22px; height:22px; vertical-align:-5px; margin-right:.5em }
+footer { margin-top:2rem; text-align:center; color:var(--muted); font-size:.8em }
+footer a { color:var(--muted) }
 .zip { font-size:.9em; border:1px solid var(--line); border-radius:6px; padding:.3em .7em }
 table { width:100%; border-collapse:collapse }
 th { text-align:left; cursor:pointer; user-select:none; color:var(--muted);
@@ -33,6 +35,9 @@ td.d, th.d { text-align:right; white-space:nowrap; color:var(--muted); font-size
   <thead><tr><th data-k="0">Name</th><th class="s" data-k="1">Size</th><th class="d" data-k="2">Modified</th></tr></thead>
   <tbody>{{rows}}</tbody>
 </table>
+<footer>
+  <a href="https://github.com/13/fshare">fshare</a> v{{version}} · built {{built}}
+</footer>
 <script>
 document.querySelectorAll('th').forEach(th => th.onclick = () => {
   const k = +th.dataset.k, tb = document.querySelector('#t tbody');

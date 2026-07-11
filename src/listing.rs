@@ -18,16 +18,27 @@ pub fn read_dir_entries(dir: &Path, show_hidden: bool) -> Vec<Entry> {
             continue;
         }
         let Ok(md) = e.metadata() else { continue };
+        let size = if md.is_dir() { dir_size(&e.path()) } else { md.len() };
         let mtime = md
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        out.push(Entry { name, is_dir: md.is_dir(), size: md.len(), mtime });
+        out.push(Entry { name, is_dir: md.is_dir(), size, mtime });
     }
     out.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
     out
+}
+
+fn dir_size(dir: &Path) -> u64 {
+    walkdir::WalkDir::new(dir)
+        .into_iter()
+        .flatten()
+        .filter(|e| e.file_type().is_file())
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum()
 }
 
 pub fn human_size(bytes: u64) -> String {
@@ -71,8 +82,27 @@ pub fn icon_for(name: &str, is_dir: bool) -> &'static str {
     }
 }
 
+/// Encode a single path segment for use in an href. Only characters that
+/// break URLs or HTML attributes are escaped; `-`, `_`, `.`, `~` stay raw.
+const PATH_SEG: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'\'')
+    .add(b'#')
+    .add(b'%')
+    .add(b'/')
+    .add(b'?')
+    .add(b'<')
+    .add(b'>')
+    .add(b'`')
+    .add(b'^')
+    .add(b'{')
+    .add(b'}')
+    .add(b'|')
+    .add(b'\\');
+
 fn enc(seg: &str) -> String {
-    percent_encoding::utf8_percent_encode(seg, percent_encoding::NON_ALPHANUMERIC).to_string()
+    percent_encoding::utf8_percent_encode(seg, PATH_SEG).to_string()
 }
 
 const UPLOAD_BLOCK: &str = r#"<div id="dropzone" style="border:2px dashed var(--line);border-radius:8px;padding:1em;text-align:center;color:var(--muted);margin-bottom:1rem;cursor:pointer">
@@ -159,18 +189,15 @@ pub fn render_html(
         let name_enc = enc(&e.name);
         let name_disp = html_escape::encode_text(&e.name);
         let icon = icon_for(&e.name, e.is_dir);
-        let (href, size, sort_size) = if e.is_dir {
-            (format!("{dir_url}/{name_enc}/"), String::new(), 0)
-        } else {
-            (format!("{dir_url}/{name_enc}"), human_size(e.size), e.size)
-        };
+        let slash = if e.is_dir { "/" } else { "" };
+        let href = format!("{dir_url}/{name_enc}{slash}");
+        let (size, sort_size) = (human_size(e.size), e.size);
         let date = chrono::DateTime::from_timestamp(e.mtime, 0)
             .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_default();
         rows.push_str(&format!(
             r#"<tr><td class="n" data-s="{n}"><a href="{href}">{icon} {name_disp}{slash}</a></td><td class="s" data-s="{sort_size}">{size}</td><td class="d" data-s="{mt}">{date}</td></tr>"#,
             n = name_disp,
-            slash = if e.is_dir { "/" } else { "" },
             mt = e.mtime,
         ));
     }
@@ -190,6 +217,8 @@ pub fn render_html(
         .replace("{{zip}}", &zip_btn)
         .replace("{{upload}}", if upload { UPLOAD_BLOCK } else { "" })
         .replace("{{rows}}", &rows)
+        .replace("{{version}}", env!("CARGO_PKG_VERSION"))
+        .replace("{{built}}", env!("FSHARE_BUILD_DATE"))
 }
 
 #[cfg(test)]
@@ -246,6 +275,45 @@ mod tests {
         assert_eq!(icon_for("k.pem", false), "🔑");
         assert_eq!(icon_for("unknown.qqq", false), "📄");
         assert_eq!(icon_for("noext", false), "📄");
+    }
+
+    #[test]
+    fn enc_keeps_safe_chars() {
+        assert_eq!(enc("my-dir_1.x~y"), "my-dir_1.x~y"); // no %2D etc.
+        assert_eq!(enc("a b"), "a%20b");
+        assert_eq!(enc("a/b"), "a%2Fb");
+        assert_eq!(enc("a%b"), "a%25b");
+        assert_eq!(enc("a?b#c"), "a%3Fb%23c");
+    }
+
+    #[test]
+    fn crumbs_show_decoded_names() {
+        let html = render_html("my-dir/sub dir", &[], "", false, false);
+        assert!(html.contains(">my-dir</a>"), "dash must not be encoded in display");
+        assert!(html.contains(">sub dir</a>"), "space must display raw");
+        assert!(html.contains("my-dir/sub%20dir/"), "href keeps dash, encodes space");
+    }
+
+    #[test]
+    fn dirs_have_recursive_size() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("d")).unwrap();
+        std::fs::write(t.path().join("d/x.bin"), vec![0u8; 3000]).unwrap();
+        std::fs::create_dir(t.path().join("d/deep")).unwrap();
+        std::fs::write(t.path().join("d/deep/y.bin"), vec![0u8; 2000]).unwrap();
+        let e = read_dir_entries(t.path(), false);
+        let d = e.iter().find(|e| e.name == "d").unwrap();
+        assert!(d.is_dir);
+        assert_eq!(d.size, 5000);
+        let html = render_html("", &e, "", false, false);
+        assert!(html.contains("4.9 KB"), "dir size shown");
+    }
+
+    #[test]
+    fn footer_shows_version() {
+        let html = render_html("", &[], "", false, false);
+        assert!(html.contains(env!("CARGO_PKG_VERSION")));
+        assert!(html.contains("footer"));
     }
 
     #[test]
