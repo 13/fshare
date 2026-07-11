@@ -46,9 +46,10 @@ dependency between settings). `ShareOpts` keeps only truly immutable options
 
 1. **Upload routes always registered.** The router no longer branches on
    `opts.upload`; POST `/` and POST `/{*path}` are always routed to
-   `upload::handle`, which returns `404 Not Found` when
-   `live.upload` is false (matches the response a GET-only router gives
-   today, so behavior when off is unchanged). `DefaultBodyLimit::disable()`
+   `upload::handle`, which returns `405 Method Not Allowed` when
+   `live.upload` is false (matches both today's GET-only router response
+   and the existing guard in `upload::handle`, so behavior when off is
+   unchanged). `DefaultBodyLimit::disable()`
    applies unconditionally; `max_upload_size` still enforces the real cap.
 2. **Token prefix becomes middleware.** Today `/s/<token>` is baked in via
    `Router::nest`, which cannot change at runtime. Replace with a
