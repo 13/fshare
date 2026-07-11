@@ -37,6 +37,7 @@ axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 async-speed-limit = "0.4.2"
 terminal_size = "0.4.4"
 toml = "1.1.2"
+ratatui = "0.29"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

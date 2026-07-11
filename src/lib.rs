@@ -12,5 +12,6 @@ pub mod mdns;
 pub mod net;
 pub mod server;
 pub mod tls;
+pub mod tui;
 pub mod upload;
 pub mod zip;

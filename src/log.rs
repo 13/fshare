@@ -11,6 +11,7 @@ pub enum Event {
     Request { ip: IpAddr, method: String, path: String, status: u16 },
     Done { ip: IpAddr, path: String, bytes: u64, completed: bool, secs: f64 },
     Upload { ip: IpAddr, name: String, bytes: u64, secs: f64 },
+    Setting { text: String },
 }
 
 pub fn format_pretty(e: &Event) -> String {
@@ -38,6 +39,7 @@ pub fn format_pretty(e: &Event) -> String {
                 human_size(*bytes)
             )
         }
+        Event::Setting { text } => format!("{ts}  ⚙ {text}"),
     }
 }
 
@@ -53,6 +55,7 @@ fn format_json(e: &Event) -> String {
         Event::Upload { ip, name, bytes, secs } => json!({
             "event": "upload", "ip": ip, "name": name, "bytes": bytes, "seconds": secs
         }),
+        Event::Setting { text } => json!({ "event": "setting", "text": text }),
     }
     .to_string()
 }
@@ -61,7 +64,12 @@ pub struct Logger;
 
 impl Logger {
     pub fn spawn(json: bool) -> mpsc::UnboundedSender<Event> {
-        let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
+        let (tx, rx) = mpsc::unbounded_channel::<Event>();
+        Self::spawn_printer(rx, json);
+        tx
+    }
+
+    pub fn spawn_printer(mut rx: mpsc::UnboundedReceiver<Event>, json: bool) {
         let cache: Arc<Mutex<HashMap<IpAddr, Option<String>>>> = Arc::default();
         tokio::spawn(async move {
             while let Some(e) = rx.recv().await {
@@ -70,17 +78,18 @@ impl Logger {
                     continue;
                 }
                 let ip = match &e {
-                    Event::Request { ip, .. } | Event::Done { ip, .. } | Event::Upload { ip, .. } => *ip,
+                    Event::Request { ip, .. } | Event::Done { ip, .. } | Event::Upload { ip, .. } => Some(*ip),
+                    Event::Setting { .. } => None,
                 };
-                let host = lookup_cached(&cache, ip).await;
                 let mut line = format_pretty(&e);
-                if let Some(h) = host {
-                    line = line.replacen(&ip.to_string(), &format!("{ip} ({h})"), 1);
+                if let Some(ip) = ip {
+                    if let Some(h) = lookup_cached(&cache, ip).await {
+                        line = line.replacen(&ip.to_string(), &format!("{ip} ({h})"), 1);
+                    }
                 }
                 println!("{line}");
             }
         });
-        tx
     }
 }
 
@@ -144,5 +153,11 @@ mod tests {
             secs: 3.0,
         });
         assert!(u.contains("⬆") && u.contains("photo.jpg") && u.contains("4.0 MB"));
+    }
+
+    #[test]
+    fn formats_setting() {
+        let s = format_pretty(&Event::Setting { text: "upload enabled".into() });
+        assert!(s.contains("⚙") && s.contains("upload enabled"));
     }
 }
