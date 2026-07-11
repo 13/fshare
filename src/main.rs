@@ -64,7 +64,18 @@ async fn async_main(
         Some(v) => Some(fshare::auth::parse_auth(v)?),
         None => None,
     };
-    let events = flog::Logger::spawn(settings.json_log);
+    let tui_wanted = settings.tui
+        && !settings.json_log
+        && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let use_tui = tui_wanted && fshare::tui::probe();
+    let (events, events_rx) = tokio::sync::mpsc::unbounded_channel::<flog::Event>();
+    let mut events_rx = Some(events_rx);
+    if !use_tui {
+        flog::Logger::spawn_printer(events_rx.take().expect("rx present"), settings.json_log);
+        if tui_wanted {
+            println!("  {} terminal does not support raw mode — plain output", "note:".yellow());
+        }
+    }
     let state = Arc::new(server::AppState::new(
         root.clone(),
         single_file,
@@ -78,19 +89,24 @@ async fn async_main(
     let others = instance::others();
     let _guard = instance::register(port, &root)?;
 
-    let _mdns_guard = if !settings.mdns {
+    let mut seed_notes: Vec<String> = Vec::new();
+    let mut mdns_guard = if !settings.mdns {
         None
     } else {
         match fshare::mdns::announce(port, &state.base()) {
             Ok(g) => Some(g),
             Err(e) => {
-                println!("  {} mDNS unavailable: {e}", "note:".yellow());
+                if use_tui {
+                    seed_notes.push(format!("mDNS unavailable: {e}"));
+                } else {
+                    println!("  {} mDNS unavailable: {e}", "note:".yellow());
+                }
                 None
             }
         }
     };
 
-    state.live.mdns.store(_mdns_guard.is_some(), std::sync::atomic::Ordering::Relaxed);
+    state.live.mdns.store(mdns_guard.is_some(), std::sync::atomic::Ordering::Relaxed);
 
     let scheme = if settings.tls { "https" } else { "http" };
 
@@ -107,12 +123,16 @@ async fn async_main(
                 .map(|i| i.ip.to_string()),
         );
         let paths = fshare::tls::load_or_generate(&fshare::tls::data_dir(), &sans)?;
-        println!(
-            "  {} TLS cert fingerprint SHA256: {}{}",
-            "note:".yellow(),
+        let fp_note = format!(
+            "TLS cert fingerprint SHA256: {}{}",
             paths.fingerprint,
             if paths.generated { "  (newly generated)" } else { "" },
         );
+        if use_tui {
+            seed_notes.push(fp_note);
+        } else {
+            println!("  {} {}", "note:".yellow(), fp_note);
+        }
         Some(
             axum_server::tls_rustls::RustlsConfig::from_pem_file(&paths.cert, &paths.key)
                 .await
@@ -122,18 +142,59 @@ async fn async_main(
         None
     };
 
-    print_banner(
-        &settings,
-        cfg_loaded.as_deref(),
-        &state,
-        port,
-        bumped,
-        &others,
-        single_file,
-        &root,
-        _mdns_guard.is_some(),
-        scheme,
-    );
+    if !use_tui {
+        print_banner(
+            &settings,
+            cfg_loaded.as_deref(),
+            &state,
+            port,
+            bumped,
+            &others,
+            single_file,
+            &root,
+            mdns_guard.is_some(),
+            scheme,
+        );
+    } else {
+        if let Some(p) = cfg_loaded.as_deref() {
+            seed_notes.push(format!("loaded {}", p.display()));
+        }
+        if settings.secure {
+            seed_notes.push(
+                "secure mode — TLS/auth/token per settings, mDNS off unless overridden"
+                    .to_string(),
+            );
+        }
+        if settings.token {
+            seed_notes.push("URLs include the access token".to_string());
+        }
+        if let Some(l) = settings.limit {
+            seed_notes.push(format!(
+                "download speed limited to {}/s",
+                fshare::listing::human_size(l)
+            ));
+        }
+        if let Some(a) = state.live.auth() {
+            let (user, pass) = a.split_once(':').unwrap_or((a.as_str(), ""));
+            let explicit = matches!(&settings.auth, Some(Some(v)) if v.contains(':'));
+            if explicit {
+                seed_notes.push(format!("auth enabled (user {user})"));
+            } else {
+                seed_notes.push(format!("auth enabled — user: {user}  password: {pass}"));
+            }
+        }
+        for o in &others {
+            seed_notes.push(format!(
+                "another fshare serving {} on :{} (PID {})",
+                o.dir.display(),
+                o.port,
+                o.pid
+            ));
+        }
+        if bumped {
+            seed_notes.push(format!("port {} was busy, using {port}", net::DEFAULT_PORT));
+        }
+    }
 
     let app = server::router(state.clone());
 
@@ -143,25 +204,69 @@ async fn async_main(
         state.downloads_done.clone(),
         state.download_signal.clone(),
     );
-    let shutdown = async {
-        tokio::select! {
-            reason = expire => println!("\n  {} — shutting down", reason.yellow()),
-            _ = tokio::signal::ctrl_c() => println!(),
-        }
-    };
 
     let make = app.into_make_service_with_connect_info::<std::net::SocketAddr>();
     listener.set_nonblocking(true)?;
-    if let Some(cfg) = tls_config {
-        tokio::select! {
-            r = axum_server::from_tcp_rustls(listener, cfg)?.serve(make) => r?,
-            _ = shutdown => {}
+
+    if use_tui {
+        // server runs as a background task; TUI owns the foreground
+        let server: tokio::task::JoinHandle<Result<(), std::io::Error>> =
+            if let Some(cfg) = tls_config {
+                let srv = axum_server::from_tcp_rustls(listener, cfg)?;
+                tokio::spawn(async move { srv.serve(make).await })
+            } else {
+                let l = tokio::net::TcpListener::from_std(listener)?;
+                tokio::spawn(async move { axum::serve(l, make).await })
+            };
+
+        let initial_auth = match &settings.auth {
+            Some(Some(v)) if v.contains(':') => Some(v.clone()),
+            _ => state.live.auth(), // generated or None — reuse what's active
+        };
+        let (files, bytes) = if single_file {
+            (1, root.metadata().map(|m| m.len()).unwrap_or(0))
+        } else {
+            dir_summary(&root)
+        };
+        let info = fshare::tui::ShareInfo { root: root.clone(), single_file, files, bytes };
+        let tapp = fshare::tui::App::new(
+            state.clone(),
+            scheme,
+            port,
+            info,
+            mdns_guard.take(),
+            initial_auth,
+            seed_notes,
+        );
+        let expire_owned = async move { expire.await.to_string() };
+        let reason = fshare::tui::run(
+            tapp,
+            events_rx.take().expect("rx reserved for tui"),
+            expire_owned,
+        )
+        .await?;
+        server.abort();
+        if let Some(r) = reason {
+            println!("\n  {} — shutting down", r.yellow());
         }
     } else {
-        let l = tokio::net::TcpListener::from_std(listener)?;
-        tokio::select! {
-            r = axum::serve(l, make) => r?,
-            _ = shutdown => {}
+        let shutdown = async {
+            tokio::select! {
+                reason = expire => println!("\n  {} — shutting down", reason.yellow()),
+                _ = tokio::signal::ctrl_c() => println!(),
+            }
+        };
+        if let Some(cfg) = tls_config {
+            tokio::select! {
+                r = axum_server::from_tcp_rustls(listener, cfg)?.serve(make) => r?,
+                _ = shutdown => {}
+            }
+        } else {
+            let l = tokio::net::TcpListener::from_std(listener)?;
+            tokio::select! {
+                r = axum::serve(l, make) => r?,
+                _ = shutdown => {}
+            }
         }
     }
 

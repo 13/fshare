@@ -112,6 +112,13 @@ pub struct Args {
     #[arg(long, overrides_with = "secure")]
     pub no_secure: bool,
 
+    /// Full-screen terminal UI (default when stdout is a terminal)
+    #[arg(long, overrides_with = "no_tui")]
+    pub tui: bool,
+    /// Plain streaming log output (override config/default)
+    #[arg(long, overrides_with = "tui")]
+    pub no_tui: bool,
+
     /// Cap total download speed, e.g. --limit 5M (bytes/second, all clients; 0 = unlimited)
     #[arg(long, value_parser = parse_limit)]
     pub limit: Option<u64>,
@@ -209,6 +216,8 @@ mod tests {
         assert!(a.secure && !a.no_secure);
         let a = Args::parse_from(["fshare", "--no-auth"]);
         assert!(a.no_auth);
+        let a = Args::parse_from(["fshare", "--tui", "--no-tui"]);
+        assert!(a.no_tui && !a.tui);
         let a = Args::parse_from(["fshare"]);
         assert_eq!(a.bind, None);
     }

@@ -21,6 +21,7 @@ pub struct Config {
     pub mdns: Option<bool>,
     pub json_log: Option<bool>,
     pub secure: Option<bool>,
+    pub tui: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +49,7 @@ pub struct Settings {
     pub limit: Option<u64>,
     pub mdns: bool,
     pub json_log: bool,
+    pub tui: bool,
     pub token: bool,
     pub secure: bool,
 }
@@ -81,6 +83,7 @@ pub fn resolve(a: &cli::Args, c: &Config) -> Result<Settings, String> {
     let cli_tls = tri(a.tls, a.no_tls);
     let cli_mdns = tri(a.mdns, a.no_mdns);
     let secure = tri(a.secure, a.no_secure).or(c.secure).unwrap_or(false);
+    let tui = tri(a.tui, a.no_tui).or(c.tui).unwrap_or(true);
 
     // auth as tri-state over Option<Option<String>>
     let cli_auth: Option<Option<Option<String>>> = if a.no_auth {
@@ -149,6 +152,7 @@ pub fn resolve(a: &cli::Args, c: &Config) -> Result<Settings, String> {
         limit,
         mdns,
         json_log: tri(a.json_log, a.no_json_log).or(c.json_log).unwrap_or(false),
+        tui,
         token,
         secure,
     })
@@ -253,5 +257,18 @@ mod tests {
     #[test]
     fn config_bad_limit_is_error() {
         assert!(resolve(&args(&[]), &cfg("limit = \"5X\"")).is_err());
+    }
+
+    #[test]
+    fn tui_precedence() {
+        let cfg: Config = toml::from_str("tui = false").unwrap();
+        let s = resolve(&args(&[]), &cfg).unwrap();
+        assert!(!s.tui, "config disables tui");
+        let s = resolve(&args(&["--tui"]), &cfg).unwrap();
+        assert!(s.tui, "CLI --tui beats config");
+        let s = resolve(&args(&["--no-tui"]), &Config::default()).unwrap();
+        assert!(!s.tui);
+        let s = resolve(&args(&[]), &Config::default()).unwrap();
+        assert!(s.tui, "default on");
     }
 }
