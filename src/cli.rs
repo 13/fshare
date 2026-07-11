@@ -71,6 +71,10 @@ pub struct Args {
     #[arg(long)]
     pub tls: bool,
 
+    /// Show recursive directory sizes in listings (walks subtrees per page view)
+    #[arg(long)]
+    pub dir_sizes: bool,
+
     /// Cap total download speed, e.g. --limit 5M (bytes/second, all clients combined)
     #[arg(long, value_parser = parse_limit)]
     pub limit: Option<u64>,

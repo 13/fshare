@@ -25,6 +25,7 @@ use tower_http::services::{ServeDir, ServeFile};
 #[derive(Clone, Debug)]
 pub struct ShareOpts {
     pub show_hidden: bool,
+    pub dir_sizes: bool,
     pub follow_links: bool,
     pub zip: bool,
     pub upload: bool,
@@ -141,7 +142,8 @@ async fn handle(
             }
             return crate::zip::zip_response(path, rel.clone(), st.opts.show_hidden);
         }
-        let entries = crate::listing::read_dir_entries(&path, st.opts.show_hidden);
+        let entries =
+            crate::listing::read_dir_entries(&path, st.opts.show_hidden, st.opts.dir_sizes);
         if q.get("format").map(String::as_str) == Some("json") {
             return axum::Json(entries).into_response();
         }
@@ -151,6 +153,7 @@ async fn handle(
             &st.base,
             st.opts.zip,
             st.opts.upload,
+            st.opts.dir_sizes,
         ))
         .into_response();
     }
@@ -405,6 +408,7 @@ mod tests {
     fn opts() -> ShareOpts {
         ShareOpts {
             show_hidden: false,
+            dir_sizes: false,
             follow_links: false,
             zip: true,
             upload: false,

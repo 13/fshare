@@ -9,7 +9,7 @@ pub struct Entry {
     pub mtime: i64,
 }
 
-pub fn read_dir_entries(dir: &Path, show_hidden: bool) -> Vec<Entry> {
+pub fn read_dir_entries(dir: &Path, show_hidden: bool, dir_sizes: bool) -> Vec<Entry> {
     let mut out = Vec::new();
     let Ok(rd) = std::fs::read_dir(dir) else { return out };
     for e in rd.flatten() {
@@ -18,7 +18,11 @@ pub fn read_dir_entries(dir: &Path, show_hidden: bool) -> Vec<Entry> {
             continue;
         }
         let Ok(md) = e.metadata() else { continue };
-        let size = if md.is_dir() { dir_size(&e.path()) } else { md.len() };
+        let size = if md.is_dir() {
+            if dir_sizes { dir_size(&e.path()) } else { 0 }
+        } else {
+            md.len()
+        };
         let mtime = md
             .modified()
             .ok()
@@ -155,6 +159,7 @@ pub fn render_html(
     base: &str,
     zip: bool,
     upload: bool,
+    dir_sizes: bool,
 ) -> String {
     let template = include_str!("listing.html");
 
@@ -191,7 +196,9 @@ pub fn render_html(
         let icon = icon_for(&e.name, e.is_dir);
         let slash = if e.is_dir { "/" } else { "" };
         let href = format!("{dir_url}/{name_enc}{slash}");
-        let (size, sort_size) = (human_size(e.size), e.size);
+        let size =
+            if e.is_dir && !dir_sizes { String::new() } else { human_size(e.size) };
+        let sort_size = e.size;
         let date = chrono::DateTime::from_timestamp(e.mtime, 0)
             .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_default();
@@ -240,10 +247,10 @@ mod tests {
         std::fs::write(t.path().join("a.txt"), "x").unwrap();
         std::fs::write(t.path().join(".hid"), "x").unwrap();
         std::fs::create_dir(t.path().join("zdir")).unwrap();
-        let e = read_dir_entries(t.path(), false);
+        let e = read_dir_entries(t.path(), false, false);
         let names: Vec<_> = e.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["zdir", "a.txt", "b.txt"]);
-        assert!(read_dir_entries(t.path(), true).iter().any(|e| e.name == ".hid"));
+        assert!(read_dir_entries(t.path(), true, false).iter().any(|e| e.name == ".hid"));
     }
 
     #[test]
@@ -252,12 +259,12 @@ mod tests {
             Entry { name: "sub dir".into(), is_dir: true, size: 0, mtime: 0 },
             Entry { name: "a<b.txt".into(), is_dir: false, size: 5, mtime: 0 },
         ];
-        let html = render_html("docs/x", &entries, "", true, false);
+        let html = render_html("docs/x", &entries, "", true, false, false);
         assert!(html.contains("sub%20dir/")); // percent-encoded href
         assert!(html.contains("a&lt;b.txt")); // escaped display name
         assert!(html.contains("?zip")); // zip button
         assert!(html.contains("docs")); // breadcrumb
-        let noz = render_html("", &entries, "", false, false);
+        let noz = render_html("", &entries, "", false, false, false);
         assert!(!noz.contains("?zip"));
     }
 
@@ -288,7 +295,7 @@ mod tests {
 
     #[test]
     fn crumbs_show_decoded_names() {
-        let html = render_html("my-dir/sub dir", &[], "", false, false);
+        let html = render_html("my-dir/sub dir", &[], "", false, false, false);
         assert!(html.contains(">my-dir</a>"), "dash must not be encoded in display");
         assert!(html.contains(">sub dir</a>"), "space must display raw");
         assert!(html.contains("my-dir/sub%20dir/"), "href keeps dash, encodes space");
@@ -301,26 +308,39 @@ mod tests {
         std::fs::write(t.path().join("d/x.bin"), vec![0u8; 3000]).unwrap();
         std::fs::create_dir(t.path().join("d/deep")).unwrap();
         std::fs::write(t.path().join("d/deep/y.bin"), vec![0u8; 2000]).unwrap();
-        let e = read_dir_entries(t.path(), false);
+        let e = read_dir_entries(t.path(), false, true);
         let d = e.iter().find(|e| e.name == "d").unwrap();
         assert!(d.is_dir);
         assert_eq!(d.size, 5000);
-        let html = render_html("", &e, "", false, false);
+        let html = render_html("", &e, "", false, false, true);
         assert!(html.contains("4.9 KB"), "dir size shown");
+        // default off: size stays 0, cell blank
+        let off = read_dir_entries(t.path(), false, false);
+        assert_eq!(off.iter().find(|e| e.name == "d").unwrap().size, 0);
+        let html_off = render_html("", &off, "", false, false, false);
+        assert!(!html_off.contains("4.9 KB"));
+    }
+
+    #[test]
+    fn mobile_nav_arrows_present() {
+        let html = render_html("", &[], "", false, false, false);
+        assert!(html.contains("navbtns"));
+        assert!(html.contains("history.back()"));
+        assert!(html.contains("history.forward()"));
     }
 
     #[test]
     fn footer_shows_version() {
-        let html = render_html("", &[], "", false, false);
+        let html = render_html("", &[], "", false, false, false);
         assert!(html.contains(env!("CARGO_PKG_VERSION")));
         assert!(html.contains("footer"));
     }
 
     #[test]
     fn upload_ui_gated() {
-        let html = render_html("", &[], "", false, true);
+        let html = render_html("", &[], "", false, true, false);
         assert!(html.contains("dropzone") && html.contains("XMLHttpRequest"));
-        let none = render_html("", &[], "", false, false);
+        let none = render_html("", &[], "", false, false, false);
         assert!(!none.contains("dropzone"));
     }
 }

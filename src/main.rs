@@ -44,6 +44,7 @@ async fn async_main(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let opts = server::ShareOpts {
         show_hidden: args.hidden,
+        dir_sizes: args.dir_sizes,
         follow_links: args.follow_links,
         zip: !args.no_zip && !single_file,
         upload: args.upload && !single_file,
