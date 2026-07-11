@@ -23,7 +23,7 @@ fn run(args: cli::Args) -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("'{}' is neither file nor directory", root.display()).into());
     }
 
-    let (listener, port, bumped) = net::bind_port(args.bind, args.port).map_err(|e| {
+    let (listener, port, bumped) = net::bind_port(args.bind.unwrap_or_else(|| "0.0.0.0".parse().unwrap()), args.port).map_err(|e| {
         format!(
             "cannot bind port {}: {e} (try --port <N>)",
             args.port.unwrap_or(net::DEFAULT_PORT)
