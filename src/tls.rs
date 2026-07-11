@@ -22,7 +22,12 @@ pub fn data_dir() -> PathBuf {
 pub fn load_or_generate(dir: &Path, sans: &[String]) -> Result<TlsPaths, String> {
     let cert = dir.join("cert.pem");
     let key = dir.join("key.pem");
-    if cert.exists() && key.exists() {
+    let sans_file = dir.join("sans.txt");
+    let stored: Vec<String> = std::fs::read_to_string(&sans_file)
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default();
+    let covered = sans.iter().all(|s| stored.contains(s));
+    if cert.exists() && key.exists() && covered {
         let fp = fingerprint_of(&cert)?;
         return Ok(TlsPaths { cert, key, fingerprint: fp, generated: false });
     }
@@ -37,6 +42,7 @@ pub fn load_or_generate(dir: &Path, sans: &[String]) -> Result<TlsPaths, String>
 
     std::fs::write(&cert, certificate.pem()).map_err(|e| e.to_string())?;
     std::fs::write(&key, key_pair.serialize_pem()).map_err(|e| e.to_string())?;
+    std::fs::write(&sans_file, sans.join("\n")).map_err(|e| e.to_string())?;
     let mut perms = std::fs::metadata(&key).map_err(|e| e.to_string())?.permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o600);
     std::fs::set_permissions(&key, perms).map_err(|e| e.to_string())?;
@@ -79,5 +85,22 @@ mod tests {
         assert!(!b.generated);
         assert_eq!(b.fingerprint, a.fingerprint);
         assert_eq!(std::fs::read(&b.cert).unwrap(), before);
+    }
+
+    #[test]
+    fn regenerates_when_san_missing() {
+        let t = tempfile::tempdir().unwrap();
+        let a = load_or_generate(t.path(), &["fshare-old.local".to_string()]).unwrap();
+        assert!(a.generated);
+        // same SANs: reuse
+        let b = load_or_generate(t.path(), &["fshare-old.local".to_string()]).unwrap();
+        assert!(!b.generated);
+        // new SAN not covered: regenerate
+        let c = load_or_generate(t.path(), &["fshare-new.local".to_string()]).unwrap();
+        assert!(c.generated);
+        assert_ne!(c.fingerprint, a.fingerprint);
+        // regenerated cert covers new SAN: reuse again
+        let d = load_or_generate(t.path(), &["fshare-new.local".to_string()]).unwrap();
+        assert!(!d.generated);
     }
 }

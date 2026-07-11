@@ -97,7 +97,7 @@ async fn async_main(
 
     let tls_config = if settings.tls {
         let mut sans = vec![
-            "fshare.local".to_string(),
+            format!("{}.local", fshare::mdns::host_label()),
             fshare::mdns::machine_hostname(),
             "localhost".to_string(),
         ];
@@ -221,9 +221,10 @@ fn print_banner(
     // address lines as (plain-for-width, colored-for-print)
     let mut addr_lines: Vec<(String, String)> = Vec::new();
     if mdns_on {
+        let host = fshare::mdns::host_label();
         addr_lines.push((
-            format!("➜ {scheme}://fshare.local:{port}{}/    (mDNS)", state.base),
-            format!("{} {scheme}://fshare.local:{port}{}/    (mDNS)", "➜".green(), state.base),
+            format!("➜ {scheme}://{host}.local:{port}{}/    (mDNS)", state.base),
+            format!("{} {scheme}://{host}.local:{port}{}/    (mDNS)", "➜".green(), state.base),
         ));
     }
     let ifaces = net::ranked_ifaces();
