@@ -116,12 +116,12 @@ flip live — no restart:
 
 | Key | Action |
 |-----|--------|
+| `s` | secure bundle: auth + token on, mDNS off (TLS itself needs a restart with `--tls`) |
 | `m` | toggle mDNS announcement |
 | `u` | toggle uploads |
 | `a` | toggle Basic auth (generated password shown) |
 | `t` | toggle token URL (new random token each enable) |
 | `h` | toggle hidden files |
-| `d` | toggle directory sizes |
 | `z` | toggle zip downloads |
 | `Q` | QR code popup |
 | `?` | help |

@@ -156,14 +156,21 @@ impl App {
     pub fn hotbar(&self) -> Vec<(char, &'static str, bool)> {
         let l = &self.state.live;
         vec![
+            ('s', "secure", self.secure_on()),
             ('m', "mdns", l.mdns.load(Relaxed)),
             ('u', "upload", l.upload.load(Relaxed)),
             ('a', "auth", l.auth().is_some()),
             ('t', "token", !l.base().is_empty()),
             ('h', "hidden", l.hidden.load(Relaxed)),
-            ('d', "dirs", l.dir_sizes.load(Relaxed)),
             ('z', "zip", l.zip.load(Relaxed)),
         ]
+    }
+
+    /// Secure mode is a derived state: auth + token on, mDNS off.
+    /// (TLS is part of the CLI bundle but cannot change at runtime.)
+    pub fn secure_on(&self) -> bool {
+        let l = &self.state.live;
+        l.auth().is_some() && !l.base().is_empty() && !l.mdns.load(Relaxed)
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
@@ -187,10 +194,7 @@ impl App {
                 let on = crate::live::toggle(&self.state.live.hidden);
                 self.note(if on { "hidden files shown" } else { "hidden files hidden" });
             }
-            KeyCode::Char('d') => {
-                let on = crate::live::toggle(&self.state.live.dir_sizes);
-                self.note(if on { "dir sizes on" } else { "dir sizes off" });
-            }
+            KeyCode::Char('s') => self.toggle_secure(),
             KeyCode::Char('z') => {
                 let on = crate::live::toggle(&self.state.live.zip);
                 self.note(if on { "zip downloads enabled" } else { "zip downloads disabled" });
@@ -248,6 +252,11 @@ impl App {
             self.note("auth disabled");
             return;
         }
+        self.enable_auth();
+        self.note("auth enabled");
+    }
+
+    fn enable_auth(&mut self) {
         let creds = match &self.initial_auth {
             Some(c) => c.clone(),
             None => crate::auth::parse_auth(&None).expect("bare auth always parses"),
@@ -257,7 +266,37 @@ impl App {
             self.notice = Some(format!("auth on — user: {user}  password: {pass}  (any key to dismiss)"));
         }
         *self.state.live.auth.write().unwrap() = Some(creds);
-        self.note("auth enabled");
+    }
+
+    /// Apply/undo the secure bundle's runtime parts: auth + token on,
+    /// mDNS off. TLS is listener-level and cannot flip mid-run — when the
+    /// share is plain HTTP a restart hint is logged.
+    fn toggle_secure(&mut self) {
+        if self.secure_on() {
+            *self.state.live.auth.write().unwrap() = None;
+            self.state.live.set_token(false);
+            if self.mdns_guard.is_none() {
+                if let Ok(g) = crate::mdns::announce(self.port, "") {
+                    self.mdns_guard = Some(g);
+                    self.state.live.mdns.store(true, Relaxed);
+                }
+            }
+            self.note("secure mode off — auth off, token off, mDNS on");
+            return;
+        }
+        if self.state.live.auth().is_none() {
+            self.enable_auth();
+        }
+        if self.state.live.base().is_empty() {
+            self.state.live.set_token(true);
+        }
+        if self.mdns_guard.take().is_some() {
+            self.state.live.mdns.store(false, Relaxed);
+        }
+        self.note("secure mode — auth on, token URL on, mDNS off");
+        if self.scheme == "http" {
+            self.note("TLS cannot start mid-run — restart with --tls or --secure for encryption");
+        }
     }
 }
 
@@ -520,12 +559,13 @@ fn draw_qr_popup(f: &mut Frame, app: &App) {
 
 fn draw_help_popup(f: &mut Frame) {
     let text = "\
+ s  secure bundle: auth + token on, mDNS off
+    (TLS needs restart with --tls)
  m  toggle mDNS announce
  u  toggle uploads
  a  toggle auth (generated password shown)
  t  toggle token URL (new token each enable)
  h  toggle hidden files
- d  toggle dir sizes
  z  toggle zip downloads
  Q  QR code popup
  ↑↓ PgUp PgDn  scroll log
@@ -590,6 +630,31 @@ mod tests {
         let bar = app.hotbar();
         let get = |name| bar.iter().find(|(_, l, _)| *l == name).unwrap().2;
         assert!(!get("upload") && get("zip") && !get("auth") && !get("token"));
+        assert!(!get("secure"));
+        assert!(!bar.iter().any(|(_, l, _)| *l == "dirs"), "dir-sizes hotkey removed");
+    }
+
+    #[test]
+    fn secure_toggle_bundles_auth_token_mdns() {
+        let mut app = test_app(None, false);
+        assert!(!app.secure_on());
+        app.handle_key(key('s'));
+        assert!(app.state.live.auth().is_some(), "secure enables auth");
+        assert!(app.state.live.base().starts_with("/s/"), "secure enables token");
+        assert!(!app.state.live.mdns.load(Relaxed), "secure disables mDNS");
+        assert!(app.secure_on());
+        assert!(app.notice.is_some(), "generated password shown");
+
+        app.handle_key(key('x')); // dismiss notice (swallowed, no quit)
+        app.handle_key(key('s')); // off
+        assert!(!app.secure_on());
+        assert_eq!(app.state.live.auth(), None);
+        assert_eq!(app.state.live.base(), "");
+
+        // 'd' no longer toggles anything
+        let before = app.state.live.dir_sizes.load(Relaxed);
+        app.handle_key(key('d'));
+        assert_eq!(app.state.live.dir_sizes.load(Relaxed), before);
     }
 
     #[test]
