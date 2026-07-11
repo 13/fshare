@@ -363,7 +363,21 @@ fn draw(f: &mut Frame, app: &App) {
                 logs = right;
                 // QR content sits at the top; the block border spans the
                 // whole column so it lines up with the log pane's bottom
-                f.render_widget(Paragraph::new(q).block(qr_block()), left);
+                let mut text = ratatui::text::Text::raw(q);
+                let url = app.primary_url();
+                let inner_w = (qw - 6) as usize; // borders + padding
+                let url_rows = 1 + url.len().div_ceil(inner_w) as u16;
+                if left.height >= qh + url_rows {
+                    // the URL the QR encodes, for humans
+                    text.push_line(Line::raw(""));
+                    text.push_line(Line::styled(url, Style::default().fg(Color::Cyan)));
+                }
+                f.render_widget(
+                    Paragraph::new(text)
+                        .wrap(ratatui::widgets::Wrap { trim: false })
+                        .block(qr_block()),
+                    left,
+                );
             }
         }
     }
@@ -752,6 +766,11 @@ mod tests {
         );
         // directly below the header (row above is the header's bottom border)
         assert!(rows[qr_title_row - 1].starts_with('└'), "QR starts right under the header");
+        // the encoded URL is printed below the QR inside the panel
+        let url_below_qr = rows[qr_title_row..h - 1]
+            .iter()
+            .any(|r| r.chars().take(40).collect::<String>().contains("http"));
+        assert!(url_below_qr, "URL shown under the QR when the column is tall enough");
 
         // too narrow: main layout only, no QR panel
         let backend = TestBackend::new(60, 20);
