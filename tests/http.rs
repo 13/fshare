@@ -8,6 +8,7 @@ async fn spawn(root: PathBuf, token: bool, upload: bool) -> (String, tokio::task
         token,
         fshare::server::ShareOpts {
             show_hidden: false,
+            dir_sizes: false,
             follow_links: false,
             zip: true,
             upload,
@@ -24,6 +25,7 @@ async fn spawn_capped(root: PathBuf, cap: u64) -> (String, tokio::task::JoinHand
         false,
         fshare::server::ShareOpts {
             show_hidden: false,
+            dir_sizes: false,
             follow_links: false,
             zip: true,
             upload: true,
@@ -143,6 +145,7 @@ async fn counts_completed_downloads() {
     let root = t.path().canonicalize().unwrap();
     let opts = fshare::server::ShareOpts {
         show_hidden: false,
+        dir_sizes: false,
         follow_links: false,
         zip: true,
         upload: false,
@@ -260,6 +263,7 @@ async fn spawn_auth(root: PathBuf, creds: &str) -> (String, tokio::task::JoinHan
         false,
         fshare::server::ShareOpts {
             show_hidden: false,
+            dir_sizes: false,
             follow_links: false,
             zip: true,
             upload: true,
@@ -323,6 +327,7 @@ async fn bandwidth_limit_slows_downloads() {
     let root = t.path().canonicalize().unwrap();
     let opts = fshare::server::ShareOpts {
         show_hidden: false,
+        dir_sizes: false,
         follow_links: false,
         zip: true,
         upload: false,
@@ -371,6 +376,7 @@ async fn tls_serves_https() {
     let root = t.path().canonicalize().unwrap();
     let opts = fshare::server::ShareOpts {
         show_hidden: false,
+        dir_sizes: false,
         follow_links: false,
         zip: true,
         upload: false,

@@ -46,6 +46,7 @@ fshare --timeout 30m        # auto-shutdown after 30 minutes
 fshare --max-downloads 3    # stop after 3 completed downloads
 fshare --token              # random /s/<token>/ URL prefix (guessing protection)
 fshare --hidden             # also serve dotfiles (hidden by default)
+fshare --dir-sizes          # show recursive folder sizes in listings
 fshare --no-zip             # disable folder zip downloads
 fshare --no-qr              # skip the QR code
 fshare --no-mdns            # skip fshare.local announcement
