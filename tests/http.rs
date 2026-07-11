@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-async fn spawn(root: PathBuf, token: bool, upload: bool) -> (String, tokio::task::JoinHandle<()>) {
+async fn spawn(root: PathBuf, token: bool, upload: bool) -> (String, Arc<fshare::server::AppState>, tokio::task::JoinHandle<()>) {
     spawn_opts(
         root,
         token,
@@ -19,7 +19,7 @@ async fn spawn(root: PathBuf, token: bool, upload: bool) -> (String, tokio::task
     .await
 }
 
-async fn spawn_capped(root: PathBuf, cap: u64) -> (String, tokio::task::JoinHandle<()>) {
+async fn spawn_capped(root: PathBuf, cap: u64) -> (String, Arc<fshare::server::AppState>, tokio::task::JoinHandle<()>) {
     spawn_opts(
         root,
         false,
@@ -41,12 +41,13 @@ async fn spawn_opts(
     token: bool,
     opts: fshare::server::ShareOpts,
     auth: Option<String>,
-) -> (String, tokio::task::JoinHandle<()>) {
+) -> (String, Arc<fshare::server::AppState>, tokio::task::JoinHandle<()>) {
     let root = root.canonicalize().unwrap();
-    let state =
-        fshare::server::AppState::new(root, false, opts, token, fshare::log::Logger::spawn(false), auth, None);
-    let base = state.base.clone();
-    let app = fshare::server::router(Arc::new(state));
+    let state = Arc::new(fshare::server::AppState::new(
+        root, false, opts, token, fshare::log::Logger::spawn(false), auth, None,
+    ));
+    let base = state.base();
+    let app = fshare::server::router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let h = tokio::spawn(async move {
@@ -54,7 +55,7 @@ async fn spawn_opts(
             .await
             .unwrap();
     });
-    (format!("http://{addr}{base}"), h)
+    (format!("http://{addr}{base}"), state, h)
 }
 
 fn fixture() -> tempfile::TempDir {
@@ -69,7 +70,7 @@ fn fixture() -> tempfile::TempDir {
 #[tokio::test]
 async fn serves_listing_and_files() {
     let t = fixture();
-    let (base, _h) = spawn(t.path().into(), false, false).await;
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
     let html = reqwest::get(format!("{base}/")).await.unwrap().text().await.unwrap();
     assert!(html.contains("hello.txt") && html.contains("sub"));
     assert!(!html.contains(".hidden"));
@@ -82,7 +83,7 @@ async fn serves_listing_and_files() {
 #[tokio::test]
 async fn json_listing() {
     let t = fixture();
-    let (base, _h) = spawn(t.path().into(), false, false).await;
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
     let v: serde_json::Value = reqwest::get(format!("{base}/?format=json"))
         .await
         .unwrap()
@@ -97,7 +98,7 @@ async fn json_listing() {
 #[tokio::test]
 async fn range_requests_work() {
     let t = fixture();
-    let (base, _h) = spawn(t.path().into(), false, false).await;
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
     let c = reqwest::Client::new();
     let r = c
         .get(format!("{base}/sub/x.bin"))
@@ -112,7 +113,7 @@ async fn range_requests_work() {
 #[tokio::test]
 async fn blocks_traversal_and_dotfiles() {
     let t = fixture();
-    let (base, _h) = spawn(t.path().into(), false, false).await;
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
     for p in ["/.hidden", "/%2e%2e/%2e%2e/etc/passwd", "/..%2f..%2fetc%2fpasswd"] {
         let r = reqwest::get(format!("{base}{p}")).await.unwrap();
         assert_eq!(r.status(), 404, "path {p}");
@@ -122,7 +123,7 @@ async fn blocks_traversal_and_dotfiles() {
 #[tokio::test]
 async fn zip_download_streams_valid_zip() {
     let t = fixture();
-    let (base, _h) = spawn(t.path().into(), false, false).await;
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
     let r = reqwest::get(format!("{base}/?zip")).await.unwrap();
     assert_eq!(r.status(), 200);
     assert!(r.headers()["content-type"].to_str().unwrap().contains("zip"));
@@ -180,7 +181,7 @@ async fn counts_completed_downloads() {
 #[tokio::test]
 async fn upload_roundtrip_and_collision() {
     let t = fixture();
-    let (base, _h) = spawn(t.path().into(), false, true).await;
+    let (base, _st, _h) = spawn(t.path().into(), false, true).await;
     let c = reqwest::Client::new();
     let part = reqwest::multipart::Part::bytes(b"fresh content".to_vec()).file_name("up.txt");
     let form = reqwest::multipart::Form::new().part("file", part);
@@ -240,7 +241,7 @@ async fn upload_roundtrip_and_collision() {
 async fn upload_disabled_and_cap() {
     let t = fixture();
     // disabled → 405
-    let (base, _h) = spawn(t.path().into(), false, false).await;
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
     let c = reqwest::Client::new();
     let part = reqwest::multipart::Part::bytes(b"x".to_vec()).file_name("a.txt");
     let form = reqwest::multipart::Form::new().part("file", part);
@@ -248,7 +249,7 @@ async fn upload_disabled_and_cap() {
     assert_eq!(r.status(), 405);
 
     // cap → 413, no temp left
-    let (base, _h) = spawn_capped(t.path().into(), 10).await;
+    let (base, _st, _h) = spawn_capped(t.path().into(), 10).await;
     let part = reqwest::multipart::Part::bytes(vec![0u8; 1000]).file_name("big.bin");
     let form = reqwest::multipart::Form::new().part("file", part);
     let r = c.post(format!("{base}/")).multipart(form).send().await.unwrap();
@@ -257,7 +258,7 @@ async fn upload_disabled_and_cap() {
     assert!(walkdir_all(t.path()).iter().all(|n| !n.contains(".fshare-upload-")));
 }
 
-async fn spawn_auth(root: PathBuf, creds: &str) -> (String, tokio::task::JoinHandle<()>) {
+async fn spawn_auth(root: PathBuf, creds: &str) -> (String, Arc<fshare::server::AppState>, tokio::task::JoinHandle<()>) {
     spawn_opts(
         root,
         false,
@@ -277,7 +278,7 @@ async fn spawn_auth(root: PathBuf, creds: &str) -> (String, tokio::task::JoinHan
 #[tokio::test]
 async fn basic_auth_gates_all_routes() {
     let t = fixture();
-    let (base, _h) = spawn_auth(t.path().into(), "ben:secret").await;
+    let (base, _st, _h) = spawn_auth(t.path().into(), "ben:secret").await;
     let c = reqwest::Client::new();
 
     // no credentials → 401 with prompt header
@@ -416,6 +417,51 @@ async fn tls_serves_https() {
     assert!(reqwest::get(format!("http://{addr}/")).await.is_err());
 }
 
+#[tokio::test]
+async fn upload_toggles_live() {
+    let t = fixture();
+    let (base, st, _h) = spawn(t.path().into(), false, false).await;
+    let client = reqwest::Client::new();
+    let form = || reqwest::multipart::Form::new().part(
+        "file",
+        reqwest::multipart::Part::bytes(b"hi".to_vec()).file_name("up.txt"),
+    );
+
+    let r = client.post(format!("{base}/")).multipart(form()).send().await.unwrap();
+    assert_eq!(r.status(), 405, "uploads off -> 405");
+
+    st.live.upload.store(true, std::sync::atomic::Ordering::Relaxed);
+    let r = client.post(format!("{base}/")).multipart(form()).send().await.unwrap();
+    assert!(r.status().is_success() || r.status().is_redirection());
+    assert!(t.path().join("up.txt").exists());
+
+    st.live.upload.store(false, std::sync::atomic::Ordering::Relaxed);
+    let r = client.post(format!("{base}/")).multipart(form()).send().await.unwrap();
+    assert_eq!(r.status(), 405, "toggled back off -> 405 again");
+}
+
+#[tokio::test]
+async fn hidden_and_auth_toggle_live() {
+    let t = fixture();
+    let (base, st, _h) = spawn(t.path().into(), false, false).await;
+
+    let html = reqwest::get(format!("{base}/")).await.unwrap().text().await.unwrap();
+    assert!(!html.contains(".hidden"));
+    st.live.hidden.store(true, std::sync::atomic::Ordering::Relaxed);
+    let html = reqwest::get(format!("{base}/")).await.unwrap().text().await.unwrap();
+    assert!(html.contains(".hidden"), "hidden files appear after live toggle");
+
+    *st.live.auth.write().unwrap() = Some("u:p".into());
+    let r = reqwest::get(format!("{base}/")).await.unwrap();
+    assert_eq!(r.status(), 401, "auth enforced after live enable");
+    let client = reqwest::Client::new();
+    let r = client.get(format!("{base}/")).basic_auth("u", Some("p")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    *st.live.auth.write().unwrap() = None;
+    let r = reqwest::get(format!("{base}/")).await.unwrap();
+    assert_eq!(r.status(), 200, "auth off again");
+}
+
 fn walkdir_all(root: &std::path::Path) -> Vec<String> {
     let mut v = Vec::new();
     for e in std::fs::read_dir(root).unwrap().flatten() {
@@ -431,7 +477,7 @@ fn walkdir_all(root: &std::path::Path) -> Vec<String> {
 #[tokio::test]
 async fn token_gates_everything() {
     let t = fixture();
-    let (base, _h) = spawn(t.path().into(), true, false).await;
+    let (base, _st, _h) = spawn(t.path().into(), true, false).await;
     assert!(base.contains("/s/"));
     let root = base.split("/s/").next().unwrap().to_string();
     assert_eq!(reqwest::get(format!("{root}/hello.txt")).await.unwrap().status(), 404);

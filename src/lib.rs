@@ -6,6 +6,7 @@ pub mod expiry;
 pub mod fsutil;
 pub mod instance;
 pub mod listing;
+pub mod live;
 pub mod log;
 pub mod mdns;
 pub mod net;

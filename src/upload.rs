@@ -63,10 +63,11 @@ pub async fn handle(
     headers: HeaderMap,
     mut mp: Multipart,
 ) -> Response {
-    if !st.opts.upload {
+    let opts = st.opts();
+    if !opts.upload {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
-    let Some(dir) = resolve(&st.root, uri.path(), &st.opts) else {
+    let Some(dir) = resolve(&st.root, uri.path(), &opts) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if !dir.is_dir() {
@@ -86,11 +87,11 @@ pub async fn handle(
             continue;
         }
         let raw = field.file_name().unwrap_or_default().to_string();
-        let Some(name) = sanitize_name(&raw, st.opts.show_hidden) else {
+        let Some(name) = sanitize_name(&raw, opts.show_hidden) else {
             return (StatusCode::BAD_REQUEST, format!("bad filename '{raw}'")).into_response();
         };
 
-        match save_part(field, &dir, &name, st.opts.max_upload).await {
+        match save_part(field, &dir, &name, opts.max_upload).await {
             Ok((final_name, bytes)) => {
                 let _ = st.events.send(crate::log::Event::Upload {
                     ip: addr.ip(),
@@ -108,7 +109,7 @@ pub async fn handle(
     if wants_json(&headers) {
         axum::Json(serde_json::json!({ "saved": saved })).into_response()
     } else {
-        let back = format!("{}{}", st.base, uri.path());
+        let back = format!("{}{}", st.base(), uri.path());
         Redirect::to(&back).into_response()
     }
 }

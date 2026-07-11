@@ -81,7 +81,7 @@ async fn async_main(
     let _mdns_guard = if !settings.mdns {
         None
     } else {
-        match fshare::mdns::announce(port, &state.base) {
+        match fshare::mdns::announce(port, &state.base()) {
             Ok(g) => Some(g),
             Err(e) => {
                 println!("  {} mDNS unavailable: {e}", "note:".yellow());
@@ -89,6 +89,8 @@ async fn async_main(
             }
         }
     };
+
+    state.live.mdns.store(_mdns_guard.is_some(), std::sync::atomic::Ordering::Relaxed);
 
     let scheme = if settings.tls { "https" } else { "http" };
 
@@ -198,6 +200,7 @@ fn print_banner(
     mdns_on: bool,
     scheme: &str,
 ) {
+    let base = state.base();
     let ver = env!("CARGO_PKG_VERSION");
     if single_file {
         println!("\n  {} v{ver} — sharing file {}", "fshare".bold(), root.display());
@@ -220,8 +223,8 @@ fn print_banner(
     if mdns_on {
         let host = fshare::mdns::host_label();
         addr_lines.push((
-            format!("➜ {scheme}://{host}.local:{port}{}/    (mDNS)", state.base),
-            format!("{} {scheme}://{host}.local:{port}{}/    (mDNS)", "➜".green(), state.base),
+            format!("➜ {scheme}://{host}.local:{port}{base}/    (mDNS)"),
+            format!("{} {scheme}://{host}.local:{port}{base}/    (mDNS)", "➜".green()),
         ));
     }
     let ifaces = net::ranked_ifaces();
@@ -231,7 +234,7 @@ fn print_banner(
             IpAddr::V6(v6) => format!("[{v6}]"),
             IpAddr::V4(v4) => v4.to_string(),
         };
-        let url = format!("{scheme}://{host}:{port}{}/", state.base);
+        let url = format!("{scheme}://{host}:{port}{base}/");
         let kind = match ifc.kind {
             net::IfaceKind::Lan => "LAN, ",
             _ => "",
@@ -316,7 +319,7 @@ fn print_banner(
             fshare::listing::human_size(l)
         );
     }
-    if let Some(a) = &state.auth {
+    if let Some(a) = state.live.auth() {
         let (user, pass) = a.split_once(':').unwrap_or((a.as_str(), ""));
         let explicit = matches!(&settings.auth, Some(Some(v)) if v.contains(':'));
         if explicit {

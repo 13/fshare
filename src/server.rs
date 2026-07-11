@@ -55,13 +55,13 @@ pub fn resolve(root: &Path, uri_path: &str, opts: &ShareOpts) -> Option<PathBuf>
 pub struct AppState {
     pub root: PathBuf,
     pub single_file: bool,
-    pub opts: ShareOpts,
-    pub base: String, // "" or "/s/<token>"
+    pub follow_links: bool,
+    pub max_upload: Option<u64>,
+    pub live: Arc<crate::live::LiveSettings>,
     pub events: tokio::sync::mpsc::UnboundedSender<crate::log::Event>,
     pub stats: Arc<Stats>,
     pub downloads_done: Arc<AtomicU64>,
     pub download_signal: Arc<tokio::sync::Notify>,
-    pub auth: Option<String>, // "user:pass"
     pub limiter: Option<async_speed_limit::Limiter>,
 }
 
@@ -76,18 +76,44 @@ impl AppState {
         limit: Option<u64>,
     ) -> Self {
         let base = if token { format!("/s/{}", gen_token()) } else { String::new() };
+        let live = Arc::new(crate::live::LiveSettings::new(
+            false, // actual mDNS state stored by main after announce succeeds
+            opts.upload,
+            opts.show_hidden,
+            opts.dir_sizes,
+            opts.zip,
+            auth,
+            base,
+        ));
         Self {
             root,
             single_file,
-            opts,
-            base,
+            follow_links: opts.follow_links,
+            max_upload: opts.max_upload,
+            live,
             events,
             stats: Arc::default(),
             downloads_done: Arc::default(),
             download_signal: Arc::default(),
-            auth,
             limiter: limit.map(|n| async_speed_limit::Limiter::new(n as f64)),
         }
+    }
+
+    /// Per-request snapshot of the mutable settings in the legacy shape.
+    pub fn opts(&self) -> ShareOpts {
+        use std::sync::atomic::Ordering::Relaxed;
+        ShareOpts {
+            show_hidden: self.live.hidden.load(Relaxed),
+            dir_sizes: self.live.dir_sizes.load(Relaxed),
+            follow_links: self.follow_links,
+            zip: self.live.zip.load(Relaxed),
+            upload: self.live.upload.load(Relaxed),
+            max_upload: self.max_upload,
+        }
+    }
+
+    pub fn base(&self) -> String {
+        self.live.base()
     }
 }
 
@@ -98,32 +124,29 @@ pub fn gen_token() -> String {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    let inner = if state.opts.upload {
-        Router::new()
-            .route("/", get(handle).post(crate::upload::handle))
-            .route("/{*path}", get(handle).post(crate::upload::handle))
-            .layer(axum::extract::DefaultBodyLimit::disable())
-    } else {
-        Router::new().route("/", get(handle)).route("/{*path}", get(handle))
-    };
+    let inner = Router::new()
+        .route("/", get(handle).post(crate::upload::handle))
+        .route("/{*path}", get(handle).post(crate::upload::handle))
+        .layer(axum::extract::DefaultBodyLimit::disable());
     // layer order: last added = outermost, so auth runs inside track and 401s get logged
     let inner = inner
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::require))
         .layer(axum::middleware::from_fn_with_state(state.clone(), track))
         .with_state(state.clone());
-    if state.base.is_empty() {
+    let base = state.base();
+    if base.is_empty() {
         inner
     } else {
         // axum 0.8's nest expands to `{base}` + `{base}/{*rest}`, and the
         // wildcard no longer matches empty — so exactly `{base}/` (the URL
         // printed in banner and QR) would 404. Route it explicitly.
-        let slashless = state.base.clone();
+        let slashless = base.clone();
         Router::new()
             .route(
-                &format!("{}/", state.base),
+                &format!("{base}/"),
                 get(move || async move { axum::response::Redirect::permanent(&slashless) }),
             )
-            .nest(&state.base, inner)
+            .nest(&base, inner)
     }
 }
 
@@ -136,33 +159,33 @@ async fn handle(
     if st.single_file {
         return serve_single(&st, req).await;
     }
+    let opts = st.opts();
 
     let rel_raw = uri.path().trim_start_matches('/').trim_end_matches('/');
     // decoded for display (breadcrumbs/title); resolve() decodes separately
     let rel = percent_decode_str(rel_raw).decode_utf8_lossy().into_owned();
-    let Some(path) = resolve(&st.root, uri.path(), &st.opts) else {
+    let Some(path) = resolve(&st.root, uri.path(), &opts) else {
         return not_found();
     };
 
     if path.is_dir() {
         if q.contains_key("zip") {
-            if !st.opts.zip {
+            if !opts.zip {
                 return not_found();
             }
-            return crate::zip::zip_response(path, rel.clone(), st.opts.show_hidden);
+            return crate::zip::zip_response(path, rel.clone(), opts.show_hidden);
         }
-        let entries =
-            crate::listing::read_dir_entries(&path, st.opts.show_hidden, st.opts.dir_sizes);
+        let entries = crate::listing::read_dir_entries(&path, opts.show_hidden, opts.dir_sizes);
         if q.get("format").map(String::as_str) == Some("json") {
             return axum::Json(entries).into_response();
         }
         return Html(crate::listing::render_html(
             &rel,
             &entries,
-            &st.base,
-            st.opts.zip,
-            st.opts.upload,
-            st.opts.dir_sizes,
+            &st.base(),
+            opts.zip,
+            opts.upload,
+            opts.dir_sizes,
         ))
         .into_response();
     }
