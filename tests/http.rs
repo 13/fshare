@@ -493,3 +493,34 @@ async fn token_gates_everything() {
     // subdir listing under token
     assert_eq!(reqwest::get(format!("{base}/sub/")).await.unwrap().status(), 200);
 }
+
+#[tokio::test]
+async fn token_regenerates_live() {
+    let t = fixture();
+    // token: true — spawn returns base WITH the /s/<tok> prefix
+    let (base, st, _h) = spawn(t.path().into(), true, false).await;
+    let plain = {
+        // strip "/s/<tok>" (3 + 12 chars) to get the bare origin
+        let cut = base.len() - (3 + 12);
+        base[..cut].to_string()
+    };
+
+    // with prefix works, both with and without trailing slash
+    assert_eq!(reqwest::get(base.to_string()).await.unwrap().status(), 200);
+    assert_eq!(reqwest::get(format!("{base}/")).await.unwrap().status(), 200);
+    assert_eq!(reqwest::get(format!("{base}/hello.txt")).await.unwrap().status(), 200);
+    // without prefix: 404
+    assert_eq!(reqwest::get(format!("{plain}/hello.txt")).await.unwrap().status(), 404);
+    // prefix must be a path-boundary match, not a string prefix
+    assert_eq!(reqwest::get(format!("{base}extra/")).await.unwrap().status(), 404);
+
+    // regenerate: old token dies, new one works
+    let new_base = st.live.set_token(true);
+    assert_eq!(reqwest::get(format!("{base}/hello.txt")).await.unwrap().status(), 404);
+    let r = reqwest::get(format!("{plain}{new_base}/hello.txt")).await.unwrap();
+    assert_eq!(r.status(), 200);
+
+    // token off: plain path works
+    st.live.set_token(false);
+    assert_eq!(reqwest::get(format!("{plain}/hello.txt")).await.unwrap().status(), 200);
+}

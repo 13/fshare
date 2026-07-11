@@ -124,30 +124,39 @@ pub fn gen_token() -> String {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    let inner = Router::new()
+    Router::new()
         .route("/", get(handle).post(crate::upload::handle))
         .route("/{*path}", get(handle).post(crate::upload::handle))
-        .layer(axum::extract::DefaultBodyLimit::disable());
-    // layer order: last added = outermost, so auth runs inside track and 401s get logged
-    let inner = inner
+        .layer(axum::extract::DefaultBodyLimit::disable())
+        // layer order: last added = outermost. token_gate runs first (404s
+        // and prefix-stripping before anything is logged), then track, then
+        // auth — so 401s get logged, same as before.
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::require))
         .layer(axum::middleware::from_fn_with_state(state.clone(), track))
-        .with_state(state.clone());
-    let base = state.base();
+        .layer(axum::middleware::from_fn_with_state(state.clone(), token_gate))
+        .with_state(state)
+}
+
+/// Enforce and strip the live token prefix ("" = no token, pass through).
+/// Reads `live.base` per request so `set_token` takes effect immediately.
+pub async fn token_gate(State(st): State<Arc<AppState>>, mut req: Request, next: Next) -> Response {
+    let base = st.base();
     if base.is_empty() {
-        inner
-    } else {
-        // axum 0.8's nest expands to `{base}` + `{base}/{*rest}`, and the
-        // wildcard no longer matches empty — so exactly `{base}/` (the URL
-        // printed in banner and QR) would 404. Route it explicitly.
-        let slashless = base.clone();
-        Router::new()
-            .route(
-                &format!("{base}/"),
-                get(move || async move { axum::response::Redirect::permanent(&slashless) }),
-            )
-            .nest(&base, inner)
+        return next.run(req).await;
     }
+    let rest = match req.uri().path().strip_prefix(base.as_str()) {
+        Some("") => "/".to_string(),                       // exactly "/s/<tok>"
+        Some(r) if r.starts_with('/') => r.to_string(),    // "/s/<tok>/..."
+        _ => return not_found(),                           // wrong or missing token
+    };
+    let pq = match req.uri().query() {
+        Some(q) => format!("{rest}?{q}"),
+        None => rest,
+    };
+    let mut parts = req.uri().clone().into_parts();
+    parts.path_and_query = Some(pq.parse().expect("stripped path from a valid uri is valid"));
+    *req.uri_mut() = Uri::from_parts(parts).expect("rebuilt uri from valid parts");
+    next.run(req).await
 }
 
 async fn handle(
