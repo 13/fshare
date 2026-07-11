@@ -3,6 +3,7 @@ pub mod banner;
 pub mod cli;
 pub mod config;
 pub mod expiry;
+pub mod fsutil;
 pub mod instance;
 pub mod listing;
 pub mod log;

@@ -14,10 +14,7 @@ fn main() {
 }
 
 fn run(args: cli::Args) -> Result<(), Box<dyn std::error::Error>> {
-    let root = args
-        .path
-        .canonicalize()
-        .map_err(|e| format!("cannot share '{}': {e}", args.path.display()))?;
+    let root = fshare::fsutil::resolve_root(&args.path)?;
     let single_file = root.is_file();
     if !single_file && !root.is_dir() {
         return Err(format!("'{}' is neither file nor directory", root.display()).into());
