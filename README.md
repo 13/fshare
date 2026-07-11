@@ -1,6 +1,9 @@
+<img src="assets/logo.svg" width="96" align="left">
+
 # fshare
 
 Modern LAN file sharing over HTTP — a better `python3 -m http.server`.
+<br clear="left">
 
 Run it in any directory; get shareable URLs (LAN addresses first), a QR code
 for phones, a live log of who connects and what they download, streamed zip
@@ -23,8 +26,12 @@ downloads of whole folders, and temporary-sharing controls.
 ## Install
 
 ```bash
-cargo install --path .
+cargo install --path .        # from source
+./build.sh                    # release tarballs into dist/
 ```
+
+Arch Linux: AUR packages `fshare` / `fshare-bin` (PKGBUILDs in
+`packaging/aur/`, published once the GitHub repo is live).
 
 ## Usage
 

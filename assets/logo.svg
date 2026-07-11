@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- share arcs radiating from the folder's top-right corner -->
+  <g fill="none" stroke="#0b6cff" stroke-linecap="round">
+    <path d="M76 30 A 12 12 0 0 0 64 18" stroke-width="5" opacity=".9"/>
+    <path d="M85 30 A 21 21 0 0 0 64 9" stroke-width="5" opacity=".6"/>
+    <path d="M94 30 A 30 30 0 0 0 64 0" stroke-width="5" opacity=".3"/>
+  </g>
+  <!-- folder -->
+  <path fill="#0b6cff" d="M8 34c0-3.3 2.7-6 6-6h17l8 8h21c3.3 0 6 2.7 6 6v4H8V34z"/>
+  <path fill="#0b6cff" opacity=".85"
+        d="M10 50h56c3.8 0 6.7 3.4 5.9 7.1l-4.6 24C66.7 84 64.2 86 61.4 86H14.6c-2.8 0-5.3-2-5.9-4.9l-4.6-24C3.3 53.4 6.2 50 10 50z"/>
+  <circle cx="64" cy="30" r="4.5" fill="#0b6cff"/>
+</svg>
