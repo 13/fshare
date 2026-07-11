@@ -53,6 +53,7 @@ upload = true
 limit = "5MB"         # total download bandwidth
 auth = "ben:secret"   # or `auth = true` for a generated password
 tls = true
+tui = false          # plain log output, no full-screen UI
 ```
 
 CLI flags always win — every boolean has an inverse (`--mdns/--no-mdns`,
@@ -94,6 +95,7 @@ fshare --upload --max-upload-size 2G
 fshare --auth               # basic auth, generated password shown in banner
 fshare --auth=ben:secret    # explicit credentials
 fshare --follow-links       # allow symlinks leaving the shared root (off by default)
+fshare --no-tui             # plain streaming log (default when piped)
 ```
 
 Extras:
@@ -105,6 +107,29 @@ Extras:
 - Global download speed cap (`--limit 5M`)
 - Detects other running fshare instances and shows them at startup
 - Shutdown prints a summary: requests served, unique clients, bytes sent
+
+## Terminal UI
+
+In an interactive terminal fshare runs a full-screen UI: header with live
+URL and transfer stats, scrolling request log, and a hotkey bar. Settings
+flip live — no restart:
+
+| Key | Action |
+|-----|--------|
+| `m` | toggle mDNS announcement |
+| `u` | toggle uploads |
+| `a` | toggle Basic auth (generated password shown) |
+| `t` | toggle token URL (new random token each enable) |
+| `h` | toggle hidden files |
+| `d` | toggle directory sizes |
+| `z` | toggle zip downloads |
+| `Q` | QR code popup |
+| `?` | help |
+| `q` / `x` / Ctrl+C | quit |
+
+Toggles last for the session only; the config file is never modified.
+Piped output, `--json-log`, `--no-tui`, or `tui = false` in the config all
+keep the classic streaming log.
 
 ## Security notes
 

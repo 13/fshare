@@ -8,7 +8,7 @@ use rand::Rng;
 use std::sync::Arc;
 
 pub async fn require(State(st): State<Arc<AppState>>, req: Request, next: Next) -> Response {
-    let Some(expected) = &st.auth else {
+    let Some(expected) = st.live.auth() else {
         return next.run(req).await;
     };
     let ok = req
