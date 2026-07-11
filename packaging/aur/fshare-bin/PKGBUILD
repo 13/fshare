@@ -1,0 +1,20 @@
+# Maintainer: Ben Egger <eggerben@gmail.com>
+_ghowner=CHANGEME   # set to the GitHub owner before pushing to AUR
+pkgname=fshare-bin
+_pkgname=fshare
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Modern LAN file sharing over HTTP — a better python3 -m http.server (binary release)"
+arch=(x86_64)
+url="https://github.com/${_ghowner}/fshare"
+license=(MIT)
+provides=(fshare)
+conflicts=(fshare)
+source=("$url/releases/download/v$pkgver/fshare-v$pkgver-x86_64-unknown-linux-musl.tar.gz")
+sha256sums=('SKIP')  # run updpkgsums once the release exists
+
+package() {
+  install -Dm755 fshare "$pkgdir/usr/bin/fshare"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

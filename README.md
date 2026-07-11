@@ -26,8 +26,12 @@ downloads of whole folders, and temporary-sharing controls.
 ## Install
 
 ```bash
-cargo install --path .
+cargo install --path .        # from source
+./build.sh                    # release tarballs into dist/
 ```
+
+Arch Linux: AUR packages `fshare` / `fshare-bin` (PKGBUILDs in
+`packaging/aur/`, published once the GitHub repo is live).
 
 ## Usage
 

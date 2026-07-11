@@ -1,0 +1,39 @@
+# Maintainer: Ben Egger <eggerben@gmail.com>
+_ghowner=CHANGEME   # set to the GitHub owner before pushing to AUR
+pkgname=fshare
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Modern LAN file sharing over HTTP — a better python3 -m http.server"
+arch=(x86_64 aarch64)
+url="https://github.com/${_ghowner}/fshare"
+license=(MIT)
+depends=(gcc-libs)
+makedepends=(cargo)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')  # run updpkgsums once the release exists
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen --release
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/release/fshare "$pkgdir/usr/bin/fshare"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
