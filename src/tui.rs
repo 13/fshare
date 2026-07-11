@@ -361,8 +361,9 @@ fn draw(f: &mut Frame, app: &App) {
                 let [left, right] =
                     Layout::horizontal([Constraint::Length(qw), Constraint::Min(0)]).areas(body);
                 logs = right;
-                let qr_rect = Rect::new(left.x, left.y + left.height - qh, left.width, qh);
-                f.render_widget(Paragraph::new(q).block(qr_block()), qr_rect);
+                // QR content sits at the top; the block border spans the
+                // whole column so it lines up with the log pane's bottom
+                f.render_widget(Paragraph::new(q).block(qr_block()), left);
             }
         }
     }
@@ -737,18 +738,20 @@ mod tests {
             .map(|y| (0..w).map(|x| buf.content()[y * w + x].symbol()).collect())
             .collect();
         let qr_title_row = rows.iter().position(|r| r.contains(" QR ")).unwrap();
-        assert!(qr_title_row > 0, "QR panel not glued to the top");
-        // QR sits in the LEFT column, bottom-aligned: its bottom-left corner
-        // is at x=0 on the row just above the hotkey bar
+        // QR sits in the LEFT column directly below the header, and its
+        // border stretches down to the hotkey bar
+        assert!(
+            rows[qr_title_row].starts_with('┌'),
+            "QR top border at the left edge: {:?}",
+            rows[qr_title_row]
+        );
         assert!(
             rows[h - 2].starts_with('└'),
-            "QR bottom-left corner flush with hotkey bar: {:?}",
+            "QR border extends to the bottom, flush with hotkey bar: {:?}",
             rows[h - 2]
         );
-        assert!(
-            !rows[qr_title_row - 1].starts_with('│'),
-            "nothing above the QR panel in the left column"
-        );
+        // directly below the header (row above is the header's bottom border)
+        assert!(rows[qr_title_row - 1].starts_with('└'), "QR starts right under the header");
 
         // too narrow: main layout only, no QR panel
         let backend = TestBackend::new(60, 20);

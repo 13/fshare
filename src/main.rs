@@ -155,6 +155,18 @@ async fn async_main(
             mdns_guard.is_some(),
             scheme,
         );
+        // count in the background — big trees shouldn't delay startup
+        if !single_file {
+            let r = root.clone();
+            tokio::task::spawn_blocking(move || {
+                let (files, bytes) = dir_summary(&r);
+                println!(
+                    "  {} sharing {files} files, {}",
+                    "note:".yellow(),
+                    fshare::listing::human_size(bytes)
+                );
+            });
+        }
     } else {
         if let Some(p) = cfg_loaded.as_deref() {
             seed_notes.push(format!("loaded {}", p.display()));
@@ -320,13 +332,8 @@ fn print_banner(
     if single_file {
         println!("\n  {} v{ver} — sharing file {}", "fshare".bold(), root.display());
     } else {
-        let (files, bytes) = dir_summary(root);
-        println!(
-            "\n  {} v{ver} — serving {} ({files} files, {})",
-            "fshare".bold(),
-            root.display(),
-            fshare::listing::human_size(bytes),
-        );
+        // file count arrives later as a note (async walk, see async_main)
+        println!("\n  {} v{ver} — serving {}", "fshare".bold(), root.display());
     }
     if bumped {
         println!("  {} port {} was busy, using {port}", "note:".yellow(), net::DEFAULT_PORT);
