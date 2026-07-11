@@ -1,6 +1,6 @@
 [package]
 name = "fshare"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Modern LAN file sharing over HTTP — a better `python3 -m http.server`"
 license = "MIT"
