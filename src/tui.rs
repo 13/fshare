@@ -186,12 +186,14 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
-        // any key clears transient overlays first
-        if self.popup != Popup::None || self.notice.is_some() {
+        // popups cover the screen: the closing key is swallowed
+        if self.popup != Popup::None {
             self.popup = Popup::None;
             self.notice = None;
             return Action::None;
         }
+        // the header notice never blocks input — clear it and act
+        self.notice = None;
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Action::Quit;
         }
@@ -676,7 +678,7 @@ mod tests {
         // supervisor swapped the listener in the meantime
         app.state.live.tls.store(true, Relaxed);
 
-        app.handle_key(key('x')); // dismiss notice (swallowed, no quit)
+        // notice is showing, but hotkeys act immediately — no double press
         app.handle_key(key('s')); // off
         assert!(!app.secure_on());
         assert_eq!(app.state.live.auth(), None);
@@ -710,10 +712,11 @@ mod tests {
         let creds = app.state.live.auth().unwrap();
         assert!(creds.starts_with("fshare:"));
         assert!(app.notice.is_some(), "generated password surfaces in header");
-        // any key dismisses the notice without acting
+        // the notice never blocks input: the next key clears it AND acts
         app.handle_key(key('u'));
         assert!(app.notice.is_none());
-        assert!(!app.state.live.upload.load(Relaxed), "dismissal key must not toggle");
+        assert!(app.state.live.upload.load(Relaxed), "key acts despite notice");
+        app.handle_key(key('u')); // back off
 
         let mut app2 = test_app(Some("ben:pw".into()), false);
         app2.handle_key(key('a')); // off (was on via initial auth)
@@ -840,7 +843,6 @@ mod tests {
         );
         app.handle_key(key('s')); // on (tls already on: no signal)
         assert!(rx.try_recv().is_err(), "no TLS signal when already https");
-        app.handle_key(key('x')); // dismiss generated-password notice
         app.handle_key(key('s')); // off
         assert!(rx.try_recv().is_err(), "startup TLS survives secure off");
         assert!(app.state.live.tls.load(Relaxed));
