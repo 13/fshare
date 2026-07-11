@@ -524,3 +524,47 @@ async fn token_regenerates_live() {
     st.live.set_token(false);
     assert_eq!(reqwest::get(format!("{plain}/hello.txt")).await.unwrap().status(), 200);
 }
+
+#[tokio::test]
+async fn pretty_404_for_browsers_only() {
+    let t = fixture();
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
+    let client = reqwest::Client::new();
+
+    // browser: styled page
+    let r = client
+        .get(format!("{base}/nope.txt"))
+        .header("accept", "text/html,application/xhtml+xml")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    let body = r.text().await.unwrap();
+    assert!(body.contains("<!doctype html>") && body.contains("history.back"));
+
+    // script/curl: plain text unchanged
+    let r = client.get(format!("{base}/nope.txt")).send().await.unwrap();
+    assert_eq!(r.status(), 404);
+    assert_eq!(r.text().await.unwrap(), "404 — not found");
+}
+
+#[tokio::test]
+async fn token_404_page_leaks_no_base() {
+    let t = fixture();
+    let (base, _st, _h) = spawn(t.path().into(), true, false).await;
+    let token = base.rsplit('/').next().unwrap().to_string();
+    let plain = {
+        let cut = base.len() - (3 + 12);
+        base[..cut].to_string()
+    };
+    let r = reqwest::Client::new()
+        .get(format!("{plain}/wrong/path"))
+        .header("accept", "text/html")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    let body = r.text().await.unwrap();
+    assert!(body.contains("<!doctype html>"));
+    assert!(!body.contains(&token), "404 page must not leak the token");
+}

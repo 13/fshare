@@ -147,7 +147,7 @@ pub async fn token_gate(State(st): State<Arc<AppState>>, mut req: Request, next:
     let rest = match req.uri().path().strip_prefix(base.as_str()) {
         Some("") => "/".to_string(),                       // exactly "/s/<tok>"
         Some(r) if r.starts_with('/') => r.to_string(),    // "/s/<tok>/..."
-        _ => return not_found(),                           // wrong or missing token
+        _ => return not_found_res(wants_html(req.headers())),                           // wrong or missing token
     };
     let pq = match req.uri().query() {
         Some(q) => format!("{rest}?{q}"),
@@ -165,8 +165,9 @@ async fn handle(
     uri: Uri,
     req: Request,
 ) -> Response {
+    let accept_html = wants_html(req.headers());
     if st.single_file {
-        return serve_single(&st, req).await;
+        return serve_single(&st, accept_html, req).await;
     }
     let opts = st.opts();
 
@@ -174,13 +175,13 @@ async fn handle(
     // decoded for display (breadcrumbs/title); resolve() decodes separately
     let rel = percent_decode_str(rel_raw).decode_utf8_lossy().into_owned();
     let Some(path) = resolve(&st.root, uri.path(), &opts) else {
-        return not_found();
+        return not_found_res(accept_html);
     };
 
     if path.is_dir() {
         if q.contains_key("zip") {
             if !opts.zip {
-                return not_found();
+                return not_found_res(accept_html);
             }
             return crate::zip::zip_response(path, rel.clone(), opts.show_hidden);
         }
@@ -202,11 +203,11 @@ async fn handle(
     // file: delegate to ServeDir for Range/ETag/MIME
     match ServeDir::new(&st.root).oneshot(req).await {
         Ok(res) => res.map(Body::new),
-        Err(_) => not_found(),
+        Err(_) => not_found_res(accept_html),
     }
 }
 
-async fn serve_single(st: &AppState, req: Request) -> Response {
+async fn serve_single(st: &AppState, accept_html: bool, req: Request) -> Response {
     // root is the file itself; serve it for any path
     let name = st.root.file_name().unwrap_or_default().to_string_lossy().into_owned();
     match ServeFile::new(&st.root).oneshot(req).await {
@@ -218,12 +219,28 @@ async fn serve_single(st: &AppState, req: Request) -> Response {
             }
             res
         }
-        Err(_) => not_found(),
+        Err(_) => not_found_res(accept_html),
     }
 }
 
 fn not_found() -> Response {
     (StatusCode::NOT_FOUND, "404 — not found").into_response()
+}
+
+pub fn wants_html(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("text/html"))
+}
+
+pub fn not_found_res(html: bool) -> Response {
+    if html {
+        let page = include_str!("404.html").replacen("{{version}}", env!("CARGO_PKG_VERSION"), 1);
+        (StatusCode::NOT_FOUND, Html(page)).into_response()
+    } else {
+        not_found()
+    }
 }
 
 pin_project! {
