@@ -513,6 +513,13 @@ async fn token_regenerates_live() {
     assert_eq!(reqwest::get(format!("{plain}/hello.txt")).await.unwrap().status(), 404);
     // prefix must be a path-boundary match, not a string prefix
     assert_eq!(reqwest::get(format!("{base}extra/")).await.unwrap().status(), 404);
+    // query string survives prefix stripping (also pins slashless-base + query)
+    let v: serde_json::Value =
+        reqwest::get(format!("{base}/?format=json")).await.unwrap().json().await.unwrap();
+    assert!(v.as_array().is_some_and(|a| !a.is_empty()));
+    let v: serde_json::Value =
+        reqwest::get(format!("{base}?format=json")).await.unwrap().json().await.unwrap();
+    assert!(v.as_array().is_some_and(|a| !a.is_empty()));
 
     // regenerate: old token dies, new one works
     let new_base = st.live.set_token(true);
