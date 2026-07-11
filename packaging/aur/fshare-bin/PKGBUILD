@@ -2,7 +2,7 @@
 _ghowner=13
 pkgname=fshare-bin
 _pkgname=fshare
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="Modern LAN file sharing over HTTP — a better python3 -m http.server (binary release)"
 arch=(x86_64)
