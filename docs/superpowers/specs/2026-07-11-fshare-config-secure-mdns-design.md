@@ -97,7 +97,11 @@ only their inverses are new. Value flags override by giving a new value;
   `fshare-ben-s-pc.local`.
 - Two PCs never collide. Two instances on the same PC share the host record
   (same IPs) and differ by port — no conflict.
-- Banner, QR code, and DNS-SD instance name use the new hostname.
+- Banner shows the new hostname URL. The DNS-SD instance name keeps the
+  human-readable raw hostname ("fshare on ben-pc"); the QR code keeps
+  encoding the best interface-IP URL (phones resolve IPs more reliably
+  than `.local` names). The mDNS TXT `path` property never carries the
+  token prefix — it always announces `/`.
 - TLS: the SAN list is persisted next to the cert (`sans.txt`). On startup,
   if any requested SAN is missing from the stored list, the cert is
   regenerated (existing "newly generated" fingerprint note covers UX).
