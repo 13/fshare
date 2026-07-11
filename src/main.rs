@@ -481,13 +481,8 @@ fn print_banner(
     }
 
     let show_qr = settings.qr && std::io::IsTerminal::is_terminal(&std::io::stdout());
-    // embed credentials so phones open the page already authenticated
-    let qr_url = best_url.as_ref().map(|u| match state.live.auth() {
-        Some(creds) => fshare::auth::embed_userinfo(u, &creds),
-        None => u.clone(),
-    });
     let qr_lines: Vec<String> = if show_qr {
-        qr_url
+        best_url
             .as_ref()
             .and_then(|url| qrcode::QrCode::new(url.as_bytes()).ok())
             .map(|code| {

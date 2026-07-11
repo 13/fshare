@@ -118,16 +118,6 @@ impl App {
         format!("{}://{host}:{}{base}/", self.scheme(), self.port)
     }
 
-    /// URL the QR encodes: primary URL, with Basic credentials embedded
-    /// when auth is on so the phone opens the page already logged in.
-    pub fn qr_url(&self) -> String {
-        let url = self.primary_url();
-        match self.state.live.auth() {
-            Some(creds) => crate::auth::embed_userinfo(&url, &creds),
-            None => url,
-        }
-    }
-
     /// One line per shareable URL: mDNS name first (when announcing), then
     /// the interfaces that matter — loopback and virtual interfaces
     /// (docker bridges, veth pairs, VM nets) are hidden unless nothing
@@ -429,7 +419,7 @@ fn draw(f: &mut Frame, app: &App) {
 
     let mut logs = body;
     if app.show_qr {
-        if let Some(q) = qr_text(&app.qr_url()) {
+        if let Some(q) = qr_text(&app.primary_url()) {
             let (qw, qh) = qr_size(&q);
             if body.width >= qw + 44 && body.height >= qh {
                 let [left, right] =
@@ -438,7 +428,7 @@ fn draw(f: &mut Frame, app: &App) {
                 // QR content sits at the top; the block border spans the
                 // whole column so it lines up with the log pane's bottom
                 let mut text = ratatui::text::Text::raw(q);
-                let url = app.qr_url();
+                let url = app.primary_url();
                 let inner_w = (qw - 6) as usize; // borders + padding
                 let url_rows = 1 + url.len().div_ceil(inner_w) as u16;
                 if left.height >= qh + url_rows {
@@ -572,7 +562,7 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 }
 
 fn draw_qr_popup(f: &mut Frame, app: &App) {
-    let url = app.qr_url();
+    let url = app.primary_url();
     let Some(rendered) = qr_text(&url) else {
         return;
     };
@@ -809,14 +799,6 @@ mod tests {
         // token off: base vanishes from all URLs immediately
         app.state.live.set_token(false);
         assert!(app.url_lines().iter().all(|l| !l.contains(&base)));
-    }
-
-    #[test]
-    fn qr_url_embeds_credentials_when_auth_on() {
-        let app = test_app(Some("ben:pw".into()), false);
-        assert!(app.qr_url().contains("://ben:pw@"), "{}", app.qr_url());
-        let app = test_app(None, false);
-        assert!(!app.qr_url().contains('@'));
     }
 
     #[test]
