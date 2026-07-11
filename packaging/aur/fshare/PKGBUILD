@@ -1,5 +1,5 @@
 # Maintainer: Ben Egger <eggerben@gmail.com>
-_ghowner=CHANGEME   # set to the GitHub owner before pushing to AUR
+_ghowner=13
 pkgname=fshare
 pkgver=0.1.0
 pkgrel=1
