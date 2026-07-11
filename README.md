@@ -85,7 +85,7 @@ fshare --hidden             # also serve dotfiles (hidden by default)
 fshare --dir-sizes          # show recursive folder sizes in listings
 fshare --no-zip             # disable folder zip downloads
 fshare --no-qr              # skip the QR code
-fshare --no-mdns            # skip fshare.local announcement
+fshare --no-mdns            # skip fshare-<hostname>.local announcement
 fshare --tls                # HTTPS with persisted self-signed cert
 fshare --limit 5M           # cap total download speed (all clients combined)
 fshare --json-log           # JSON-lines event log for scripting
@@ -101,7 +101,7 @@ Extras:
 - `GET /path/?format=json` — machine-readable directory listing
 - `GET /path/?zip` — streamed zip of that folder (no temp files)
 - Range requests supported: browser video seeking and download resume work
-- Announces `http://fshare.local:8000` via mDNS (zero-config, `--no-mdns` to disable)
+- Announces `http://fshare-<hostname>.local:8000` via mDNS (zero-config, `--no-mdns` to disable)
 - Global download speed cap (`--limit 5M`)
 - Detects other running fshare instances and shows them at startup
 - Shutdown prints a summary: requests served, unique clients, bytes sent
