@@ -234,6 +234,7 @@ async fn async_main(
             scheme,
             port,
             info,
+            settings.qr,
             mdns_guard.take(),
             initial_auth,
             seed_notes,

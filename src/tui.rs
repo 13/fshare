@@ -40,6 +40,7 @@ pub struct App {
     scheme: &'static str,
     port: u16,
     info: ShareInfo,
+    show_qr: bool, // side-panel QR when the terminal is wide enough
     log: VecDeque<String>,
     scroll: usize, // lines above the bottom; 0 = follow
     popup: Popup,
@@ -55,6 +56,7 @@ impl App {
         scheme: &'static str,
         port: u16,
         info: ShareInfo,
+        show_qr: bool,
         mdns_guard: Option<crate::mdns::MdnsGuard>,
         initial_auth: Option<String>,
         seed_notes: Vec<String>,
@@ -64,6 +66,7 @@ impl App {
             scheme,
             port,
             info,
+            show_qr,
             log: VecDeque::new(),
             scroll: 0,
             popup: Popup::None,
@@ -102,6 +105,41 @@ impl App {
             })
             .unwrap_or_else(|| "localhost".to_string());
         format!("{}://{host}:{}{base}/", self.scheme, self.port)
+    }
+
+    /// One line per shareable URL: mDNS name first (when announcing), then
+    /// every ranked interface — same set the plain banner prints. Reads the
+    /// live base so token toggles update the list immediately.
+    pub fn url_lines(&self) -> Vec<String> {
+        let base = self.state.base();
+        let mut v = Vec::new();
+        if self.state.live.mdns.load(Relaxed) {
+            v.push(format!(
+                "➜ {}://{}.local:{}{base}/    (mDNS)",
+                self.scheme,
+                crate::mdns::host_label(),
+                self.port
+            ));
+        }
+        for (i, ifc) in crate::net::ranked_ifaces().iter().enumerate() {
+            let host = match ifc.ip {
+                IpAddr::V6(v6) => format!("[{v6}]"),
+                IpAddr::V4(v4) => v4.to_string(),
+            };
+            let kind = match ifc.kind {
+                crate::net::IfaceKind::Lan => "LAN, ",
+                _ => "",
+            };
+            let marker = if i == 0 { "➜" } else { " " };
+            v.push(format!(
+                "{marker} {}://{host}:{}{base}/    ({kind}{})",
+                self.scheme, self.port, ifc.name
+            ));
+        }
+        if v.is_empty() {
+            v.push(format!("➜ {}", self.primary_url()));
+        }
+        v
     }
 
     /// (key, label, on) triples for the hotkey bar, in display order.
@@ -279,9 +317,45 @@ pub async fn run(
 }
 
 fn draw(f: &mut Frame, app: &App) {
-    let [header, logs, bar] =
-        Layout::vertical([Constraint::Length(4), Constraint::Min(3), Constraint::Length(1)])
-            .areas(f.area());
+    let area = f.area();
+    // QR side panel when enabled and the terminal is wide enough for
+    // both the QR and a useful main column
+    let mut main_area = area;
+    if app.show_qr {
+        if let Some(q) = qr_text(&app.primary_url()) {
+            let qlines: Vec<&str> = q.lines().collect();
+            let qw = qlines.first().map(|l| l.chars().count()).unwrap_or(0) as u16 + 2;
+            let qh = qlines.len() as u16 + 2;
+            if area.width >= qw + 46 && area.height >= qh {
+                let [left, right] =
+                    Layout::horizontal([Constraint::Min(0), Constraint::Length(qw)]).areas(area);
+                let qr_rect = Rect::new(right.x, right.y, right.width, qh.min(right.height));
+                f.render_widget(
+                    Paragraph::new(q).block(Block::default().borders(Borders::ALL).title(" QR ")),
+                    qr_rect,
+                );
+                main_area = left;
+            }
+        }
+    }
+    draw_main(f, app, main_area);
+
+    match app.popup {
+        Popup::Qr => draw_qr_popup(f, app),
+        Popup::Help => draw_help_popup(f),
+        Popup::None => {}
+    }
+}
+
+fn draw_main(f: &mut Frame, app: &App, area: Rect) {
+    let urls = app.url_lines();
+    let header_h = urls.len() as u16 + 1 + app.notice.is_some() as u16 + 2;
+    let [header, logs, bar] = Layout::vertical([
+        Constraint::Length(header_h),
+        Constraint::Min(3),
+        Constraint::Length(1),
+    ])
+    .areas(area);
 
     // header
     let title = if app.info.single_file {
@@ -297,12 +371,22 @@ fn draw(f: &mut Frame, app: &App) {
     };
     let stats = &app.state.stats;
     let status = format!(
-        "➜ {}   {} clients   {} sent",
-        app.primary_url(),
+        "  {} clients   {} sent",
         stats.clients.lock().unwrap().len(),
         crate::listing::human_size(stats.bytes.load(Relaxed)),
     );
-    let mut lines = vec![Line::from(Span::styled(status, Style::default().fg(Color::Green)))];
+    let mut lines: Vec<Line> = urls
+        .iter()
+        .map(|u| {
+            let style = if u.starts_with('➜') {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default()
+            };
+            Line::from(Span::styled(u.clone(), style))
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(status, Style::default().fg(Color::Cyan))));
     if let Some(n) = &app.notice {
         lines.push(Line::from(Span::styled(
             n.clone(),
@@ -344,12 +428,12 @@ fn draw(f: &mut Frame, app: &App) {
         Style::default().fg(Color::DarkGray),
     ));
     f.render_widget(Paragraph::new(Line::from(spans)), bar);
+}
 
-    match app.popup {
-        Popup::Qr => draw_qr_popup(f, app),
-        Popup::Help => draw_help_popup(f),
-        Popup::None => {}
-    }
+fn qr_text(url: &str) -> Option<String> {
+    qrcode::QrCode::new(url.as_bytes()).ok().map(|c| {
+        c.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build()
+    })
 }
 
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
@@ -360,13 +444,9 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 
 fn draw_qr_popup(f: &mut Frame, app: &App) {
     let url = app.primary_url();
-    let Ok(code) = qrcode::QrCode::new(url.as_bytes()) else {
+    let Some(rendered) = qr_text(&url) else {
         return;
     };
-    let rendered = code
-        .render::<qrcode::render::unicode::Dense1x2>()
-        .quiet_zone(true)
-        .build();
     let lines: Vec<&str> = rendered.lines().collect();
     let w = lines.first().map(|l| l.chars().count()).unwrap_or(0) as u16 + 2;
     let h = lines.len() as u16 + 2;
@@ -439,6 +519,7 @@ mod tests {
             "http",
             8000,
             ShareInfo { root: "/tmp".into(), single_file: false, files: 3, bytes: 1024 },
+            false,
             None,
             auth,
             vec![],
@@ -542,6 +623,51 @@ mod tests {
         let total = app.log.len();
         let top_after = app.log[total - 1 - app.scroll].clone();
         assert_eq!(top_before, top_after, "scrolled window must not shift on ring trim");
+    }
+
+    #[test]
+    fn url_lines_list_all_interfaces_with_live_base() {
+        let app = test_app(None, true); // token on
+        let lines = app.url_lines();
+        assert!(!lines.is_empty());
+        let base = app.state.base();
+        assert!(base.starts_with("/s/"));
+        for l in &lines {
+            assert!(l.contains(":8000"), "port in every URL: {l}");
+            assert!(l.contains(&base), "live token base in every URL: {l}");
+        }
+        assert!(lines[0].starts_with('➜'), "primary URL marked");
+        // no mDNS line while the flag is off
+        assert!(!lines.iter().any(|l| l.contains("(mDNS)")));
+
+        app.state.live.mdns.store(true, Relaxed);
+        let lines = app.url_lines();
+        assert!(lines[0].contains(".local:") && lines[0].contains("(mDNS)"));
+
+        // token off: base vanishes from all URLs immediately
+        app.state.live.set_token(false);
+        assert!(app.url_lines().iter().all(|l| !l.contains(&base)));
+    }
+
+    #[test]
+    fn qr_side_panel_renders_when_wide() {
+        let mut app = test_app(None, false);
+        app.show_qr = true;
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.contains(" QR "), "QR side panel visible on wide terminal");
+        assert!(text.contains("[m]mdns"), "hotbar still present");
+
+        // too narrow: main layout only, no QR panel
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(!text.contains(" QR "), "no QR panel on narrow terminal");
     }
 
     #[test]
