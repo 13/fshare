@@ -114,7 +114,16 @@ pub fn router(state: Arc<AppState>) -> Router {
     if state.base.is_empty() {
         inner
     } else {
-        Router::new().nest(&state.base, inner)
+        // axum 0.8's nest expands to `{base}` + `{base}/{*rest}`, and the
+        // wildcard no longer matches empty — so exactly `{base}/` (the URL
+        // printed in banner and QR) would 404. Route it explicitly.
+        let slashless = state.base.clone();
+        Router::new()
+            .route(
+                &format!("{}/", state.base),
+                get(move || async move { axum::response::Redirect::permanent(&slashless) }),
+            )
+            .nest(&state.base, inner)
     }
 }
 
