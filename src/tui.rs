@@ -289,13 +289,8 @@ impl App {
         if self.secure_on() {
             *self.state.live.auth.write().unwrap() = None;
             self.state.live.set_token(false);
-            if self.mdns_guard.is_none() {
-                if let Ok(g) = crate::mdns::announce(self.port, "") {
-                    self.mdns_guard = Some(g);
-                    self.state.live.mdns.store(true, Relaxed);
-                }
-            }
-            self.note("secure mode off — auth off, token off, mDNS on");
+            // mDNS stays off — announcing is opt-in (press m)
+            self.note("secure mode off — auth off, token off");
             // undo the live TLS enable too, unless TLS was the startup choice
             if self.state.live.tls.load(Relaxed) && !self.tls_at_start {
                 if let Some(tx) = &self.tls_tx {
@@ -683,6 +678,7 @@ mod tests {
         assert!(!app.secure_on());
         assert_eq!(app.state.live.auth(), None);
         assert_eq!(app.state.live.base(), "");
+        assert!(!app.state.live.mdns.load(Relaxed), "secure off must not enable mDNS");
         // TLS was enabled live (not at startup) — secure off downgrades it
         assert_eq!(rx.try_recv(), Ok(false), "secure off signals TLS downgrade");
 
