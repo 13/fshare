@@ -1474,3 +1474,157 @@ keep the classic streaming log.
 git add src/cli.rs src/config.rs src/main.rs README.md
 git commit -m "feat: activate TUI on tty with --tui/--no-tui and config key"
 ```
+
+---
+
+### Task 5: styled 404 page
+
+**Files:**
+- Create: `src/404.html`
+- Modify: `src/server.rs`
+- Test: `tests/http.rs`
+
+**Interfaces:**
+- Consumes: `token_gate` from Task 2 (its 404 must use the same negotiation).
+- Produces: `server::not_found_res(html: bool) -> Response`, `server::wants_html(&HeaderMap) -> bool`. The old `not_found()` stays as the plain-text branch.
+
+- [ ] **Step 1: Write failing integration test**
+
+Append to `tests/http.rs`:
+
+```rust
+#[tokio::test]
+async fn pretty_404_for_browsers_only() {
+    let t = fixture();
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
+    let client = reqwest::Client::new();
+
+    // browser: styled page
+    let r = client
+        .get(format!("{base}/nope.txt"))
+        .header("accept", "text/html,application/xhtml+xml")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    let body = r.text().await.unwrap();
+    assert!(body.contains("<!doctype html>") && body.contains("history.back"));
+
+    // script/curl: plain text unchanged
+    let r = client.get(format!("{base}/nope.txt")).send().await.unwrap();
+    assert_eq!(r.status(), 404);
+    assert_eq!(r.text().await.unwrap(), "404 — not found");
+}
+
+#[tokio::test]
+async fn token_404_page_leaks_no_base() {
+    let t = fixture();
+    let (base, _st, _h) = spawn(t.path().into(), true, false).await;
+    let token = base.rsplit('/').next().unwrap().to_string();
+    let plain = {
+        let cut = base.len() - (3 + 12);
+        base[..cut].to_string()
+    };
+    let r = reqwest::Client::new()
+        .get(format!("{plain}/wrong/path"))
+        .header("accept", "text/html")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    let body = r.text().await.unwrap();
+    assert!(body.contains("<!doctype html>"));
+    assert!(!body.contains(&token), "404 page must not leak the token");
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `cargo test --test http pretty_404`
+Expected: FAIL — body is plain text even with the html Accept header.
+
+- [ ] **Step 3: Create `src/404.html`**
+
+```html
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fshare — not found</title>
+<style>
+:root { --bg:#fff; --fg:#1a1a1a; --muted:#777; --line:#e5e5e5; --accent:#0b6cff; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#121212; --fg:#e8e8e8; --muted:#999; --line:#2a2a2a; --accent:#5aa2ff; }
+}
+* { box-sizing:border-box }
+body { margin:0; min-height:100vh; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:.5rem; background:var(--bg);
+  color:var(--fg); font:15px/1.5 system-ui, sans-serif; padding:1rem; }
+h1 { font-size:5rem; margin:0; color:var(--muted); font-weight:700; letter-spacing:.05em }
+p { margin:0; color:var(--muted) }
+a { color:var(--accent); text-decoration:none } a:hover { text-decoration:underline }
+svg { width:56px; height:56px; opacity:.9 }
+footer { position:fixed; bottom:1rem; color:var(--muted); font-size:.8em }
+footer a { color:var(--muted) }
+</style>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <g fill="none" stroke="#0b6cff" stroke-linecap="round">
+    <path d="M76 30 A 12 12 0 0 0 64 18" stroke-width="5" opacity=".9"/>
+    <path d="M85 30 A 21 21 0 0 0 64 9" stroke-width="5" opacity=".6"/>
+    <path d="M94 30 A 30 30 0 0 0 64 0" stroke-width="5" opacity=".3"/>
+  </g>
+  <path fill="#0b6cff" d="M8 34c0-3.3 2.7-6 6-6h17l8 8h21c3.3 0 6 2.7 6 6v4H8V34z"/>
+  <path fill="#0b6cff" opacity=".85"
+        d="M10 50h56c3.8 0 6.7 3.4 5.9 7.1l-4.6 24C66.7 84 64.2 86 61.4 86H14.6c-2.8 0-5.3-2-5.9-4.9l-4.6-24C3.3 53.4 6.2 50 10 50z"/>
+  <circle cx="64" cy="30" r="4.5" fill="#0b6cff"/>
+</svg>
+<h1>404</h1>
+<p>nothing here</p>
+<p><a href="javascript:history.back()">&#8592; back</a></p>
+<footer><a href="https://github.com/13/fshare">fshare</a> v{{version}}</footer>
+```
+
+Security note honored: no link to the share root — this page also serves wrong-token 404s, and a root link would leak the token. `javascript:history.back()` only.
+
+- [ ] **Step 4: Content negotiation in `src/server.rs`**
+
+Replace `not_found()` with the trio:
+
+```rust
+fn not_found() -> Response {
+    (StatusCode::NOT_FOUND, "404 — not found").into_response()
+}
+
+pub fn wants_html(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("text/html"))
+}
+
+pub fn not_found_res(html: bool) -> Response {
+    if html {
+        let page = include_str!("404.html").replacen("{{version}}", env!("CARGO_PKG_VERSION"), 1);
+        (StatusCode::NOT_FOUND, Html(page)).into_response()
+    } else {
+        not_found()
+    }
+}
+```
+
+Wire the call sites:
+
+1. `handle()`: at the top (before any `req` consumption) add `let accept_html = wants_html(req.headers());`, then replace every `return not_found();` / `Err(_) => not_found(),` in `handle` with `not_found_res(accept_html)`.
+2. `token_gate()`: replace `return not_found();` with `return not_found_res(wants_html(req.headers()));`.
+3. `serve_single()`: add an `accept_html: bool` parameter (caller computes it in `handle` before the call: `serve_single(&st, accept_html, req).await`), and its `Err(_) => not_found(),` becomes `Err(_) => not_found_res(accept_html),`.
+
+- [ ] **Step 5: Run tests**
+
+Run: `cargo test && cargo clippy --all-targets -- -D warnings`
+Expected: all green including both new 404 tests.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/404.html src/server.rs tests/http.rs
+git commit -m "feat: styled 404 page for browser requests"
+```

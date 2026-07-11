@@ -163,11 +163,26 @@ Toggling a setting appends a synthetic line to the log pane
   capacity, scroll offset math.
 - Integration tests unchanged (not a tty → plain mode automatically).
 
+## Feature 4: Styled 404 page
+
+Browser requests (Accept header contains `text/html`) that hit a 404 get a
+styled page (`src/404.html`) matching `listing.html`'s look: same CSS
+variables (auto light/dark), fshare logo, large muted "404", "nothing here"
+line, back link, version footer. Non-browser clients (curl, JSON consumers)
+keep the plain `404 — not found` text body.
+
+Security constraint: the page must contain **no link to the share root** —
+the same 404 fires for wrong/missing token prefixes, and embedding the real
+base would hand the token to guessers. The back link is
+`javascript:history.back()` only. The template has no request-derived
+content (only the static version string), so no injection surface.
+
 ## Implementation order
 
-One branch, four tasks:
+One branch, five tasks:
 1. `LiveSettings` + server refactors (upload always-routed, auth from live,
    handlers read atomics) — plain mode still default output.
 2. Token-prefix middleware replacing `nest` (largest server change).
 3. TUI module: event loop, layout, log ring, toggles wired, QR/help popups.
 4. Activation logic (`tui` setting, tty detection, fallback), docs, README.
+5. Styled 404 page with Accept-header content negotiation.
