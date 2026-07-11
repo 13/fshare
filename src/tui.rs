@@ -46,8 +46,11 @@ pub struct App {
     mdns_guard: Option<crate::mdns::MdnsGuard>,
     notice: Option<String>,           // e.g. generated credentials, cleared on any key
     initial_auth: Option<String>,     // "user:pass" from CLI/config, reused on re-enable
-    /// Signals the server supervisor to swap the plain listener for TLS.
-    tls_tx: Option<mpsc::UnboundedSender<()>>,
+    /// Signals the server supervisor to swap the listener: true = TLS,
+    /// false = plain HTTP.
+    tls_tx: Option<mpsc::UnboundedSender<bool>>,
+    /// TLS chosen at startup (--tls / config): secure-off never downgrades it.
+    tls_at_start: bool,
 }
 
 impl App {
@@ -60,8 +63,9 @@ impl App {
         mdns_guard: Option<crate::mdns::MdnsGuard>,
         initial_auth: Option<String>,
         seed_notes: Vec<String>,
-        tls_tx: Option<mpsc::UnboundedSender<()>>,
+        tls_tx: Option<mpsc::UnboundedSender<bool>>,
     ) -> Self {
+        let tls_at_start = state.live.tls.load(Relaxed);
         let mut app = Self {
             state,
             port,
@@ -74,6 +78,7 @@ impl App {
             notice: None,
             initial_auth,
             tls_tx,
+            tls_at_start,
         };
         for n in seed_notes {
             app.push_line(n);
@@ -111,6 +116,16 @@ impl App {
             })
             .unwrap_or_else(|| "localhost".to_string());
         format!("{}://{host}:{}{base}/", self.scheme(), self.port)
+    }
+
+    /// URL the QR encodes: primary URL, with Basic credentials embedded
+    /// when auth is on so the phone opens the page already logged in.
+    pub fn qr_url(&self) -> String {
+        let url = self.primary_url();
+        match self.state.live.auth() {
+            Some(creds) => crate::auth::embed_userinfo(&url, &creds),
+            None => url,
+        }
     }
 
     /// One line per shareable URL: mDNS name first (when announcing), then
@@ -289,6 +304,14 @@ impl App {
                 }
             }
             self.note("secure mode off — auth off, token off, mDNS on");
+            // undo the live TLS enable too, unless TLS was the startup choice
+            if self.state.live.tls.load(Relaxed) && !self.tls_at_start {
+                if let Some(tx) = &self.tls_tx {
+                    if tx.send(false).is_ok() {
+                        self.note("disabling TLS — swapping back to plain HTTP");
+                    }
+                }
+            }
             return;
         }
         if self.state.live.auth().is_none() {
@@ -303,7 +326,7 @@ impl App {
         self.note("secure mode — auth on, token URL on, mDNS off");
         if !self.state.live.tls.load(Relaxed) {
             match &self.tls_tx {
-                Some(tx) if tx.send(()).is_ok() => {
+                Some(tx) if tx.send(true).is_ok() => {
                     self.note("enabling TLS — swapping listener, open plain connections drop");
                 }
                 _ => self.note("TLS cannot start mid-run — restart with --tls for encryption"),
@@ -406,7 +429,7 @@ fn draw(f: &mut Frame, app: &App) {
 
     let mut logs = body;
     if app.show_qr {
-        if let Some(q) = qr_text(&app.primary_url()) {
+        if let Some(q) = qr_text(&app.qr_url()) {
             let (qw, qh) = qr_size(&q);
             if body.width >= qw + 44 && body.height >= qh {
                 let [left, right] =
@@ -415,7 +438,7 @@ fn draw(f: &mut Frame, app: &App) {
                 // QR content sits at the top; the block border spans the
                 // whole column so it lines up with the log pane's bottom
                 let mut text = ratatui::text::Text::raw(q);
-                let url = app.primary_url();
+                let url = app.qr_url();
                 let inner_w = (qw - 6) as usize; // borders + padding
                 let url_rows = 1 + url.len().div_ceil(inner_w) as u16;
                 if left.height >= qh + url_rows {
@@ -549,7 +572,7 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 }
 
 fn draw_qr_popup(f: &mut Frame, app: &App) {
-    let url = app.primary_url();
+    let url = app.qr_url();
     let Some(rendered) = qr_text(&url) else {
         return;
     };
@@ -660,11 +683,16 @@ mod tests {
         assert!(app.secure_on());
         assert!(app.notice.is_some(), "generated password shown");
 
+        // supervisor swapped the listener in the meantime
+        app.state.live.tls.store(true, Relaxed);
+
         app.handle_key(key('x')); // dismiss notice (swallowed, no quit)
         app.handle_key(key('s')); // off
         assert!(!app.secure_on());
         assert_eq!(app.state.live.auth(), None);
         assert_eq!(app.state.live.base(), "");
+        // TLS was enabled live (not at startup) — secure off downgrades it
+        assert_eq!(rx.try_recv(), Ok(false), "secure off signals TLS downgrade");
 
         // 'd' no longer toggles anything
         let before = app.state.live.dir_sizes.load(Relaxed);
@@ -781,6 +809,59 @@ mod tests {
         // token off: base vanishes from all URLs immediately
         app.state.live.set_token(false);
         assert!(app.url_lines().iter().all(|l| !l.contains(&base)));
+    }
+
+    #[test]
+    fn qr_url_embeds_credentials_when_auth_on() {
+        let app = test_app(Some("ben:pw".into()), false);
+        assert!(app.qr_url().contains("://ben:pw@"), "{}", app.qr_url());
+        let app = test_app(None, false);
+        assert!(!app.qr_url().contains('@'));
+    }
+
+    #[test]
+    fn secure_off_keeps_startup_tls() {
+        // TLS chosen at startup: secure off must NOT downgrade it
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let opts = ShareOpts {
+            show_hidden: false,
+            dir_sizes: false,
+            follow_links: false,
+            zip: true,
+            upload: false,
+            max_upload: None,
+        };
+        let (etx, _erx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(AppState::new(
+            std::path::PathBuf::from("/tmp"),
+            false,
+            opts,
+            false,
+            etx,
+            None,
+            None,
+        ));
+        state.live.tls.store(true, Relaxed); // startup --tls
+        let mut app = App::new(
+            state,
+            8000,
+            ShareInfo {
+                root: "/tmp".into(),
+                single_file: false,
+                summary: Arc::new(std::sync::Mutex::new(Some((3, 1024)))),
+            },
+            false,
+            None,
+            None,
+            vec![],
+            Some(tx),
+        );
+        app.handle_key(key('s')); // on (tls already on: no signal)
+        assert!(rx.try_recv().is_err(), "no TLS signal when already https");
+        app.handle_key(key('x')); // dismiss generated-password notice
+        app.handle_key(key('s')); // off
+        assert!(rx.try_recv().is_err(), "startup TLS survives secure off");
+        assert!(app.state.live.tls.load(Relaxed));
     }
 
     #[test]

@@ -213,7 +213,7 @@ async fn async_main(
     if use_tui {
         // server runs as a background task supervised for live TLS
         // enablement; TUI owns the foreground
-        let (tls_tx, tls_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+        let (tls_tx, tls_rx) = tokio::sync::mpsc::unbounded_channel::<bool>();
         let server = tokio::spawn(serve_tui(
             listener,
             make,
@@ -310,10 +310,10 @@ fn tls_sans() -> Vec<String> {
     sans
 }
 
-/// TUI-mode server supervisor: serves plain HTTP until the TUI signals a
-/// live TLS enable (secure hotkey), then rebinds the same port with the
-/// persisted certificate. Open plain connections drop; the TUI is told
-/// via Setting events. Falls back to plain HTTP if TLS setup fails.
+/// TUI-mode server supervisor: swaps the listener between plain HTTP and
+/// TLS on signals from the TUI (secure hotkey; true = TLS, false = plain),
+/// rebinding the same port each time. Open connections drop on a swap; the
+/// TUI is told via Setting events. TLS setup failure falls back to plain.
 async fn serve_tui(
     listener: std::net::TcpListener,
     make: axum::extract::connect_info::IntoMakeServiceWithConnectInfo<
@@ -321,62 +321,91 @@ async fn serve_tui(
         std::net::SocketAddr,
     >,
     tls_config: Option<axum_server::tls_rustls::RustlsConfig>,
-    mut tls_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+    mut tls_rx: tokio::sync::mpsc::UnboundedReceiver<bool>,
     state: Arc<server::AppState>,
     bind: std::net::IpAddr,
     port: u16,
 ) -> Result<(), std::io::Error> {
-    if let Some(cfg) = tls_config {
-        return axum_server::from_tcp_rustls(listener, cfg)?.serve(make).await;
-    }
-    {
-        let l = tokio::net::TcpListener::from_std(listener)?;
-        tokio::select! {
-            r = axum::serve(l, make.clone()) => return r,
-            Some(()) = tls_rx.recv() => {} // dropping the select arm closes the listener
-        }
-    }
     let note = |t: String| {
         let _ = state.events.send(fshare::log::Event::Setting { text: t });
     };
-    let rebind = || -> std::io::Result<std::net::TcpListener> {
-        let sock = std::net::TcpListener::bind(std::net::SocketAddr::new(bind, port))?;
-        sock.set_nonblocking(true)?;
-        Ok(sock)
-    };
-    let tls_cfg = match fshare::tls::load_or_generate(&fshare::tls::data_dir(), &tls_sans()) {
-        Ok(paths) => {
-            match axum_server::tls_rustls::RustlsConfig::from_pem_file(&paths.cert, &paths.key)
-                .await
-            {
-                Ok(cfg) => {
-                    note(format!(
-                        "TLS enabled — cert SHA256 {}{}",
-                        paths.fingerprint,
-                        if paths.generated { " (newly generated)" } else { "" },
-                    ));
-                    Some(cfg)
+    let mut sock = Some(listener);
+    let mut cached = tls_config; // loaded once, reused across swaps
+    let mut want_tls = cached.is_some();
+    loop {
+        let s = match sock.take() {
+            Some(s) => s,
+            None => {
+                let s = std::net::TcpListener::bind(std::net::SocketAddr::new(bind, port))?;
+                s.set_nonblocking(true)?;
+                s
+            }
+        };
+        if want_tls && cached.is_none() {
+            match fshare::tls::load_or_generate(&fshare::tls::data_dir(), &tls_sans()) {
+                Ok(paths) => {
+                    match axum_server::tls_rustls::RustlsConfig::from_pem_file(
+                        &paths.cert,
+                        &paths.key,
+                    )
+                    .await
+                    {
+                        Ok(cfg) => {
+                            note(format!(
+                                "TLS cert SHA256 {}{}",
+                                paths.fingerprint,
+                                if paths.generated { " (newly generated)" } else { "" },
+                            ));
+                            cached = Some(cfg);
+                        }
+                        Err(e) => {
+                            note(format!("TLS enable failed: {e} — staying on plain HTTP"));
+                            want_tls = false;
+                        }
+                    }
                 }
                 Err(e) => {
                     note(format!("TLS enable failed: {e} — staying on plain HTTP"));
-                    None
+                    want_tls = false;
                 }
             }
         }
-        Err(e) => {
-            note(format!("TLS enable failed: {e} — staying on plain HTTP"));
-            None
-        }
-    };
-    match tls_cfg {
-        Some(cfg) => {
-            state.live.tls.store(true, Ordering::Relaxed);
+        let was_tls = state.live.tls.swap(want_tls, Ordering::Relaxed);
+        if want_tls && !was_tls {
             note("URLs are https now — reload open pages".to_string());
-            axum_server::from_tcp_rustls(rebind()?, cfg)?.serve(make).await
+        } else if !want_tls && was_tls {
+            note("TLS off — URLs are plain http again".to_string());
         }
-        None => {
-            let l = tokio::net::TcpListener::from_std(rebind()?)?;
-            axum::serve(l, make).await
+        // serve until a swap signal arrives; dropping the future closes
+        // the listener so the same port can be rebound
+        let signal = if want_tls {
+            let srv = axum_server::from_tcp_rustls(s, cached.clone().expect("cfg cached"))?;
+            tokio::select! {
+                r = srv.serve(make.clone()) => return r,
+                w = tls_rx.recv() => w,
+            }
+        } else {
+            let l = tokio::net::TcpListener::from_std(s)?;
+            tokio::select! {
+                r = axum::serve(l, make.clone()) => return r,
+                w = tls_rx.recv() => w,
+            }
+        };
+        match signal {
+            Some(w) => want_tls = w,
+            None => {
+                // TUI gone (channel closed): keep serving in the current
+                // mode until the main task aborts us
+                let s = std::net::TcpListener::bind(std::net::SocketAddr::new(bind, port))?;
+                s.set_nonblocking(true)?;
+                return if want_tls {
+                    axum_server::from_tcp_rustls(s, cached.expect("cfg cached"))?
+                        .serve(make)
+                        .await
+                } else {
+                    axum::serve(tokio::net::TcpListener::from_std(s)?, make).await
+                };
+            }
         }
     }
 }
@@ -452,8 +481,13 @@ fn print_banner(
     }
 
     let show_qr = settings.qr && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    // embed credentials so phones open the page already authenticated
+    let qr_url = best_url.as_ref().map(|u| match state.live.auth() {
+        Some(creds) => fshare::auth::embed_userinfo(u, &creds),
+        None => u.clone(),
+    });
     let qr_lines: Vec<String> = if show_qr {
-        best_url
+        qr_url
             .as_ref()
             .and_then(|url| qrcode::QrCode::new(url.as_bytes()).ok())
             .map(|code| {

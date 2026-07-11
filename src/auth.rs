@@ -56,6 +56,17 @@ pub fn parse_auth(arg: &Option<String>) -> Result<String, String> {
     Ok(format!("{user}:{pass}"))
 }
 
+/// Insert percent-encoded Basic credentials into a URL's authority:
+/// "https://host/" + "u:p" → "https://u:p@host/". Browsers opening such
+/// a URL (e.g. from the QR code) authenticate without a prompt.
+pub fn embed_userinfo(url: &str, creds: &str) -> String {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    let (user, pass) = creds.split_once(':').unwrap_or((creds, ""));
+    let user = utf8_percent_encode(user, NON_ALPHANUMERIC);
+    let pass = utf8_percent_encode(pass, NON_ALPHANUMERIC);
+    url.replacen("://", &format!("://{user}:{pass}@"), 1)
+}
+
 /// Constant-time, length-independent comparison: iteration count depends
 /// only on the longer input, never on where the first mismatch occurs.
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
@@ -93,6 +104,14 @@ mod tests {
             assert_eq!(p.len(), 10);
             assert!(!p.chars().any(|c| "0O1lI".contains(c)), "{p}");
         }
+    }
+
+    #[test]
+    fn embeds_userinfo() {
+        assert_eq!(embed_userinfo("http://10.0.0.5:8000/", "ben:pw"), "http://ben:pw@10.0.0.5:8000/");
+        // reserved characters are percent-encoded so the URL stays parseable
+        assert_eq!(embed_userinfo("https://h/", "a@b:p/w:x"), "https://a%40b:p%2Fw%3Ax@h/");
+        assert_eq!(embed_userinfo("http://h/", "solo"), "http://solo:@h/");
     }
 
     #[test]
