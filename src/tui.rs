@@ -308,6 +308,7 @@ pub async fn run(
 
     tokio::pin!(shutdown);
     let mut tick = tokio::time::interval(Duration::from_millis(500));
+    let hosts = log::HostCache::default();
 
     let result: std::io::Result<Option<String>> = loop {
         if let Err(e) = terminal.draw(|f| draw(f, &app)) {
@@ -324,7 +325,10 @@ pub async fn run(
                 }
                 // resize events fall through; next draw() picks up the new size
             }
-            Some(e) = events.recv() => app.push_line(log::format_pretty(&e)),
+            Some(e) = events.recv() => {
+                let line = hosts.annotate(&e).await;
+                app.push_line(line);
+            }
             _ = tick.tick() => {} // refresh stats in header
             r = &mut shutdown => { break Ok(Some(r)); }
         }
@@ -357,9 +361,9 @@ fn draw(f: &mut Frame, app: &App) {
             let qh = qlines.len() as u16 + 2;
             if body.width >= qw + 44 && body.height >= qh {
                 let [left, right] =
-                    Layout::horizontal([Constraint::Min(0), Constraint::Length(qw)]).areas(body);
-                logs = left;
-                let qr_rect = Rect::new(right.x, right.y + right.height - qh, right.width, qh);
+                    Layout::horizontal([Constraint::Length(qw), Constraint::Min(0)]).areas(body);
+                logs = right;
+                let qr_rect = Rect::new(left.x, left.y + left.height - qh, left.width, qh);
                 f.render_widget(
                     Paragraph::new(q).block(Block::default().borders(Borders::ALL).title(" QR ")),
                     qr_rect,
@@ -698,15 +702,16 @@ mod tests {
             .collect();
         let qr_title_row = rows.iter().position(|r| r.contains(" QR ")).unwrap();
         assert!(qr_title_row > 0, "QR panel not glued to the top");
-        // exact last column: only the QR panel reaches x = w-1
+        // QR sits in the LEFT column, bottom-aligned: its bottom-left corner
+        // is at x=0 on the row just above the hotkey bar
         assert!(
-            rows[h - 2].ends_with('┘'),
-            "QR bottom-right corner flush with hotkey bar: {:?}",
+            rows[h - 2].starts_with('└'),
+            "QR bottom-left corner flush with hotkey bar: {:?}",
             rows[h - 2]
         );
         assert!(
-            !rows[qr_title_row - 1].ends_with('│'),
-            "nothing above the QR panel in the right column"
+            !rows[qr_title_row - 1].starts_with('│'),
+            "nothing above the QR panel in the left column"
         );
 
         // too narrow: main layout only, no QR panel

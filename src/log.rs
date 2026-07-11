@@ -70,46 +70,57 @@ impl Logger {
     }
 
     pub fn spawn_printer(mut rx: mpsc::UnboundedReceiver<Event>, json: bool) {
-        let cache: Arc<Mutex<HashMap<IpAddr, Option<String>>>> = Arc::default();
+        let cache = HostCache::default();
         tokio::spawn(async move {
             while let Some(e) = rx.recv().await {
                 if json {
                     println!("{}", format_json(&e));
                     continue;
                 }
-                let ip = match &e {
-                    Event::Request { ip, .. } | Event::Done { ip, .. } | Event::Upload { ip, .. } => Some(*ip),
-                    Event::Setting { .. } => None,
-                };
-                let mut line = format_pretty(&e);
-                if let Some(ip) = ip {
-                    if let Some(h) = lookup_cached(&cache, ip).await {
-                        line = line.replacen(&ip.to_string(), &format!("{ip} ({h})"), 1);
-                    }
-                }
-                println!("{line}");
+                println!("{}", cache.annotate(&e).await);
             }
         });
     }
 }
 
-async fn lookup_cached(
-    cache: &Arc<Mutex<HashMap<IpAddr, Option<String>>>>,
-    ip: IpAddr,
-) -> Option<String> {
-    if let Some(v) = cache.lock().unwrap().get(&ip) {
-        return v.clone();
+/// Reverse-DNS cache shared by the plain printer and the TUI so both
+/// annotate client IPs the same way ("ip (hostname)").
+#[derive(Default, Clone)]
+pub struct HostCache(Arc<Mutex<HashMap<IpAddr, Option<String>>>>);
+
+impl HostCache {
+    /// `format_pretty` plus hostname annotation; lookups cached per IP.
+    pub async fn annotate(&self, e: &Event) -> String {
+        let ip = match e {
+            Event::Request { ip, .. } | Event::Done { ip, .. } | Event::Upload { ip, .. } => {
+                Some(*ip)
+            }
+            Event::Setting { .. } => None,
+        };
+        let mut line = format_pretty(e);
+        if let Some(ip) = ip {
+            if let Some(h) = self.lookup(ip).await {
+                line = line.replacen(&ip.to_string(), &format!("{ip} ({h})"), 1);
+            }
+        }
+        line
     }
-    let res = tokio::time::timeout(
-        std::time::Duration::from_millis(300),
-        tokio::task::spawn_blocking(move || dns_lookup::lookup_addr(&ip).ok()),
-    )
-    .await
-    .ok()
-    .and_then(|r| r.ok())
-    .flatten();
-    cache.lock().unwrap().insert(ip, res.clone());
-    res
+
+    async fn lookup(&self, ip: IpAddr) -> Option<String> {
+        if let Some(v) = self.0.lock().unwrap().get(&ip) {
+            return v.clone();
+        }
+        let res = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            tokio::task::spawn_blocking(move || dns_lookup::lookup_addr(&ip).ok()),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .flatten();
+        self.0.lock().unwrap().insert(ip, res.clone());
+        res
+    }
 }
 
 #[cfg(test)]
