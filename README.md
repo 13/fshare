@@ -41,6 +41,34 @@ cargo install --path .        # from source
 Arch Linux: AUR packages `fshare` / `fshare-bin` (PKGBUILDs in
 `packaging/aur/`, published once the GitHub repo is live).
 
+## Configuration
+
+Persistent defaults live in `~/.config/fshare/config.toml` (or
+`$XDG_CONFIG_HOME/fshare/config.toml`; `FSHARE_CONFIG=<path>` overrides):
+
+```toml
+port = 9000
+mdns = false          # don't announce on the network
+upload = true
+limit = "5MB"         # total download bandwidth
+auth = "ben:secret"   # or `auth = true` for a generated password
+tls = true
+```
+
+CLI flags always win — every boolean has an inverse (`--mdns/--no-mdns`,
+`--tls/--no-tls`, …), and `--limit 0` lifts a configured limit.
+Per-share options (`--token`, `--timeout`, `--max-downloads`) are CLI-only.
+
+## Sharing on a public network
+
+```sh
+fshare --secure
+```
+
+One flag enables TLS, HTTP Basic auth with a generated password, a random
+token URL, and turns mDNS announcement off. Anything you set explicitly
+(e.g. `--auth bob:pw` or `mdns = true` in the config) wins over the bundle.
+
 ## Usage
 
 ```bash
@@ -57,7 +85,7 @@ fshare --hidden             # also serve dotfiles (hidden by default)
 fshare --dir-sizes          # show recursive folder sizes in listings
 fshare --no-zip             # disable folder zip downloads
 fshare --no-qr              # skip the QR code
-fshare --no-mdns            # skip fshare.local announcement
+fshare --no-mdns            # skip fshare-<hostname>.local announcement
 fshare --tls                # HTTPS with persisted self-signed cert
 fshare --limit 5M           # cap total download speed (all clients combined)
 fshare --json-log           # JSON-lines event log for scripting
@@ -73,7 +101,7 @@ Extras:
 - `GET /path/?format=json` — machine-readable directory listing
 - `GET /path/?zip` — streamed zip of that folder (no temp files)
 - Range requests supported: browser video seeking and download resume work
-- Announces `http://fshare.local:8000` via mDNS (zero-config, `--no-mdns` to disable)
+- Announces `http://fshare-<hostname>.local:8000` via mDNS (zero-config, `--no-mdns` to disable)
 - Global download speed cap (`--limit 5M`)
 - Detects other running fshare instances and shows them at startup
 - Shutdown prints a summary: requests served, unique clients, bytes sent
