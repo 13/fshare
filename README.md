@@ -41,6 +41,34 @@ cargo install --path .        # from source
 Arch Linux: AUR packages `fshare` / `fshare-bin` (PKGBUILDs in
 `packaging/aur/`, published once the GitHub repo is live).
 
+## Configuration
+
+Persistent defaults live in `~/.config/fshare/config.toml` (or
+`$XDG_CONFIG_HOME/fshare/config.toml`; `FSHARE_CONFIG=<path>` overrides):
+
+```toml
+port = 9000
+mdns = false          # don't announce on the network
+upload = true
+limit = "5MB"         # total download bandwidth
+auth = "ben:secret"   # or `auth = true` for a generated password
+tls = true
+```
+
+CLI flags always win — every boolean has an inverse (`--mdns/--no-mdns`,
+`--tls/--no-tls`, …), and `--limit 0` lifts a configured limit.
+Per-share options (`--token`, `--timeout`, `--max-downloads`) are CLI-only.
+
+## Sharing on a public network
+
+```sh
+fshare --secure
+```
+
+One flag enables TLS, HTTP Basic auth with a generated password, a random
+token URL, and turns mDNS announcement off. Anything you set explicitly
+(e.g. `--auth bob:pw` or `mdns = true` in the config) wins over the bundle.
+
 ## Usage
 
 ```bash

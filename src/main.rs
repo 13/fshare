@@ -23,19 +23,32 @@ fn run(args: cli::Args) -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("'{}' is neither file nor directory", root.display()).into());
     }
 
-    let (listener, port, bumped) = net::bind_port(args.bind.unwrap_or_else(|| "0.0.0.0".parse().unwrap()), args.port).map_err(|e| {
+    let cfg_path = fshare::config::default_path();
+    let (cfg, cfg_loaded) = match &cfg_path {
+        Some(p) => match fshare::config::load(p)? {
+            Some(c) => (c, Some(p.clone())),
+            None => (fshare::config::Config::default(), None),
+        },
+        None => (fshare::config::Config::default(), None),
+    };
+    let settings = fshare::config::resolve(&args, &cfg)?;
+
+    let (listener, port, bumped) = net::bind_port(settings.bind, settings.port).map_err(|e| {
         format!(
             "cannot bind port {}: {e} (try --port <N>)",
-            args.port.unwrap_or(net::DEFAULT_PORT)
+            settings.port.unwrap_or(net::DEFAULT_PORT)
         )
     })?;
 
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async_main(args, root, single_file, listener, port, bumped))
+    rt.block_on(async_main(args, settings, cfg_loaded, root, single_file, listener, port, bumped))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn async_main(
     args: cli::Args,
+    settings: fshare::config::Settings,
+    cfg_loaded: Option<std::path::PathBuf>,
     root: std::path::PathBuf,
     single_file: bool,
     listener: std::net::TcpListener,
@@ -43,32 +56,32 @@ async fn async_main(
     bumped: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let opts = server::ShareOpts {
-        show_hidden: args.hidden,
-        dir_sizes: args.dir_sizes,
-        follow_links: args.follow_links,
-        zip: !args.no_zip && !single_file,
-        upload: args.upload && !single_file,
-        max_upload: args.max_upload_size,
+        show_hidden: settings.hidden,
+        dir_sizes: settings.dir_sizes,
+        follow_links: settings.follow_links,
+        zip: settings.zip && !single_file,
+        upload: settings.upload && !single_file,
+        max_upload: settings.max_upload_size,
     };
-    let auth = match &args.auth {
+    let auth = match &settings.auth {
         Some(v) => Some(fshare::auth::parse_auth(v)?),
         None => None,
     };
-    let events = flog::Logger::spawn(args.json_log);
+    let events = flog::Logger::spawn(settings.json_log);
     let state = Arc::new(server::AppState::new(
         root.clone(),
         single_file,
         opts,
-        args.token,
+        settings.token,
         events,
         auth,
-        args.limit,
+        settings.limit,
     ));
 
     let others = instance::others();
     let _guard = instance::register(port, &root)?;
 
-    let _mdns_guard = if args.no_mdns {
+    let _mdns_guard = if !settings.mdns {
         None
     } else {
         match fshare::mdns::announce(port, &state.base) {
@@ -80,9 +93,9 @@ async fn async_main(
         }
     };
 
-    let scheme = if args.tls { "https" } else { "http" };
+    let scheme = if settings.tls { "https" } else { "http" };
 
-    let tls_config = if args.tls {
+    let tls_config = if settings.tls {
         let mut sans = vec![
             "fshare.local".to_string(),
             fshare::mdns::machine_hostname(),
@@ -111,7 +124,8 @@ async fn async_main(
     };
 
     print_banner(
-        &args,
+        &settings,
+        cfg_loaded.as_deref(),
         &state,
         port,
         bumped,
@@ -176,7 +190,8 @@ fn dir_summary(root: &std::path::Path) -> (u64, u64) {
 
 #[allow(clippy::too_many_arguments)]
 fn print_banner(
-    args: &cli::Args,
+    settings: &fshare::config::Settings,
+    cfg_loaded: Option<&std::path::Path>,
     state: &server::AppState,
     port: u16,
     bumped: bool,
@@ -234,7 +249,7 @@ fn print_banner(
         }
     }
 
-    let show_qr = !args.no_qr && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let show_qr = settings.qr && std::io::IsTerminal::is_terminal(&std::io::stdout());
     let qr_lines: Vec<String> = if show_qr {
         best_url
             .as_ref()
@@ -281,10 +296,22 @@ fn print_banner(
             o.pid
         );
     }
-    if args.token {
+    if let Some(p) = cfg_loaded {
+        println!("  {} loaded {}", "note:".yellow(), p.display());
+    }
+    if settings.secure {
+        println!(
+            "  {} secure mode — TLS {}, auth {}, token URL, mDNS {}",
+            "note:".yellow(),
+            if settings.tls { "on" } else { "off (overridden)" },
+            if settings.auth.is_some() { "on" } else { "off (overridden)" },
+            if mdns_on { "on (overridden)" } else { "off" },
+        );
+    }
+    if settings.token {
         println!("  {} URLs above include the access token", "note:".yellow());
     }
-    if let Some(l) = args.limit {
+    if let Some(l) = settings.limit {
         println!(
             "  {} download speed limited to {}/s",
             "note:".yellow(),
@@ -293,10 +320,7 @@ fn print_banner(
     }
     if let Some(a) = &state.auth {
         let (user, pass) = a.split_once(':').unwrap_or((a.as_str(), ""));
-        let explicit = matches!(
-            args.auth.as_ref().and_then(|v| v.as_ref()),
-            Some(v) if v.contains(':')
-        );
+        let explicit = matches!(&settings.auth, Some(Some(v)) if v.contains(':'));
         if explicit {
             println!("  {} auth enabled (user {user})", "note:".yellow());
         } else {
