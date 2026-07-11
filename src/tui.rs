@@ -108,8 +108,9 @@ impl App {
     }
 
     /// One line per shareable URL: mDNS name first (when announcing), then
-    /// every ranked interface — same set the plain banner prints. Reads the
-    /// live base so token toggles update the list immediately.
+    /// the interfaces that matter — loopback and virtual interfaces
+    /// (docker bridges, veth pairs, VM nets) are hidden unless nothing
+    /// else exists. Reads the live base so token toggles update the list.
     pub fn url_lines(&self) -> Vec<String> {
         let base = self.state.base();
         let mut v = Vec::new();
@@ -121,7 +122,16 @@ impl App {
                 self.port
             ));
         }
-        for (i, ifc) in crate::net::ranked_ifaces().iter().enumerate() {
+        let all = crate::net::ranked_ifaces();
+        let mut ifaces: Vec<&crate::net::Iface> = all
+            .iter()
+            .filter(|i| i.kind != crate::net::IfaceKind::Loopback && !is_virtual_iface(&i.name))
+            .collect();
+        if ifaces.is_empty() {
+            // nothing physical: fall back to whatever exists rather than none
+            ifaces = all.iter().filter(|i| i.kind != crate::net::IfaceKind::Loopback).collect();
+        }
+        for (i, ifc) in ifaces.iter().enumerate() {
             let host = match ifc.ip {
                 IpAddr::V6(v6) => format!("[{v6}]"),
                 IpAddr::V4(v4) => v4.to_string(),
@@ -249,6 +259,15 @@ impl App {
         *self.state.live.auth.write().unwrap() = Some(creds);
         self.note("auth enabled");
     }
+}
+
+/// Virtual/container interfaces are noise in the URL list: bridges,
+/// veth pairs, VM and overlay networks. Physical NICs, wifi, and VPN
+/// tunnels stay.
+fn is_virtual_iface(name: &str) -> bool {
+    ["docker", "br-", "veth", "virbr", "vmnet", "lxc", "lxd"]
+        .iter()
+        .any(|p| name.starts_with(p))
 }
 
 /// Can we enter raw mode? Used by main to fall back to plain output.
@@ -647,6 +666,19 @@ mod tests {
         // token off: base vanishes from all URLs immediately
         app.state.live.set_token(false);
         assert!(app.url_lines().iter().all(|l| !l.contains(&base)));
+    }
+
+    #[test]
+    fn virtual_ifaces_filtered() {
+        for v in ["docker0", "br-48f804a6be88", "veth1a2b", "virbr0", "vmnet8", "lxcbr0"] {
+            assert!(is_virtual_iface(v), "{v} should be hidden");
+        }
+        for p in ["wlan0", "eth0", "enp3s0", "wg0", "tun0", "tailscale0", "lo"] {
+            assert!(!is_virtual_iface(p), "{p} should stay");
+        }
+        // lo is excluded by kind, not by name
+        let app = test_app(None, false);
+        assert!(app.url_lines().iter().all(|l| !l.contains("(lo)")));
     }
 
     #[test]
