@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod banner;
 pub mod cli;
 pub mod expiry;
 pub mod instance;
