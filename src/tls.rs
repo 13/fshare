@@ -33,7 +33,18 @@ pub fn load_or_generate(dir: &Path, sans: &[String]) -> Result<TlsPaths, String>
     }
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
 
-    let mut params = rcgen::CertificateParams::new(sans.to_vec()).map_err(|e| e.to_string())?;
+    // Regenerate over the union of previously-stored and newly-requested
+    // SANs (stored first, then new ones appended) so alternating networks
+    // (e.g. a laptop moving between IP A and IP B) don't churn the cert on
+    // every switch — once both SANs have been seen, either one is covered.
+    let mut union_sans = stored.clone();
+    for s in sans {
+        if !union_sans.contains(s) {
+            union_sans.push(s.clone());
+        }
+    }
+
+    let mut params = rcgen::CertificateParams::new(union_sans.clone()).map_err(|e| e.to_string())?;
     let now = time::OffsetDateTime::now_utc();
     params.not_before = now - time::Duration::days(1);
     params.not_after = now + time::Duration::days(3650);
@@ -42,7 +53,7 @@ pub fn load_or_generate(dir: &Path, sans: &[String]) -> Result<TlsPaths, String>
 
     std::fs::write(&cert, certificate.pem()).map_err(|e| e.to_string())?;
     std::fs::write(&key, key_pair.serialize_pem()).map_err(|e| e.to_string())?;
-    std::fs::write(&sans_file, sans.join("\n")).map_err(|e| e.to_string())?;
+    std::fs::write(&sans_file, union_sans.join("\n")).map_err(|e| e.to_string())?;
     let mut perms = std::fs::metadata(&key).map_err(|e| e.to_string())?.permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o600);
     std::fs::set_permissions(&key, perms).map_err(|e| e.to_string())?;
@@ -102,5 +113,20 @@ mod tests {
         // regenerated cert covers new SAN: reuse again
         let d = load_or_generate(t.path(), &["fshare-new.local".to_string()]).unwrap();
         assert!(!d.generated);
+    }
+
+    #[test]
+    fn regenerate_unions_sans_to_avoid_churn() {
+        let t = tempfile::tempdir().unwrap();
+        let a = load_or_generate(t.path(), &["a.local".to_string()]).unwrap();
+        assert!(a.generated);
+        // requesting a different SAN regenerates (b not covered)
+        let b = load_or_generate(t.path(), &["b.local".to_string()]).unwrap();
+        assert!(b.generated);
+        assert_ne!(b.fingerprint, a.fingerprint);
+        // union of {a, b} is now stored, so re-requesting "a" alone is covered: no regen
+        let c = load_or_generate(t.path(), &["a.local".to_string()]).unwrap();
+        assert!(!c.generated);
+        assert_eq!(c.fingerprint, b.fingerprint);
     }
 }

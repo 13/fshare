@@ -55,6 +55,13 @@ impl Drop for MdnsGuard {
     }
 }
 
+/// TXT record path we advertise. Always "/" — never the real (possibly
+/// token-bearing) base path, since mDNS TXT records are broadcast in the
+/// clear to every listener on the local network.
+fn txt_path(_base: &str) -> String {
+    "/".to_string()
+}
+
 pub fn announce(port: u16, base: &str) -> Result<MdnsGuard, String> {
     let ips: Vec<IpAddr> = ranked_ifaces()
         .into_iter()
@@ -65,7 +72,7 @@ pub fn announce(port: u16, base: &str) -> Result<MdnsGuard, String> {
         return Err("no non-loopback interfaces".into());
     }
     let daemon = ServiceDaemon::new().map_err(|e| e.to_string())?;
-    let path = if base.is_empty() { "/".to_string() } else { format!("{base}/") };
+    let path = txt_path(base);
     let props = [("path", path.as_str())];
     let info = ServiceInfo::new(
         "_http._tcp.local.",
@@ -98,6 +105,12 @@ mod tests {
     fn host_label_prefixed() {
         assert!(host_label().starts_with("fshare-"));
         assert!(mdns_host().ends_with(".local."));
+    }
+
+    #[test]
+    fn txt_path_never_leaks_token() {
+        assert_eq!(txt_path(""), "/");
+        assert_eq!(txt_path("/s/abc"), "/");
     }
 
     #[test]

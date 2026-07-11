@@ -69,6 +69,9 @@ pub fn load(path: &Path) -> Result<Option<Config>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
     };
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
     toml::from_str(&text)
         .map(Some)
         .map_err(|e| format!("{}: {e}", path.display()))
@@ -167,6 +170,15 @@ mod tests {
     #[test]
     fn load_missing_is_none() {
         assert!(load(Path::new("/nonexistent/fshare.toml")).unwrap().is_none());
+    }
+
+    #[test]
+    fn load_empty_file_is_none() {
+        let t = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(t.path(), "").unwrap();
+        assert!(load(t.path()).unwrap().is_none());
+        std::fs::write(t.path(), "   \n\n").unwrap();
+        assert!(load(t.path()).unwrap().is_none());
     }
 
     #[test]
