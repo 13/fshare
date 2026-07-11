@@ -436,4 +436,14 @@ async fn token_gates_everything() {
     let root = base.split("/s/").next().unwrap().to_string();
     assert_eq!(reqwest::get(format!("{root}/hello.txt")).await.unwrap().status(), 404);
     assert_eq!(reqwest::get(format!("{base}/hello.txt")).await.unwrap().status(), 200);
+
+    // the exact URL printed in banner/QR: token base WITH trailing slash
+    // (axum 0.8 wildcard doesn't match empty, so nest alone 404s here)
+    let r = reqwest::get(format!("{base}/")).await.unwrap();
+    assert_eq!(r.status(), 200, "token root listing with trailing slash");
+    assert!(r.text().await.unwrap().contains("hello.txt"));
+    // and without trailing slash
+    assert_eq!(reqwest::get(base.clone()).await.unwrap().status(), 200);
+    // subdir listing under token
+    assert_eq!(reqwest::get(format!("{base}/sub/")).await.unwrap().status(), 200);
 }
