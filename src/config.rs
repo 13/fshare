@@ -98,7 +98,7 @@ pub fn resolve(a: &cli::Args, c: &Config) -> Result<Settings, String> {
     });
 
     let mut tls = cli_tls.or(c.tls).unwrap_or(false);
-    let mut mdns = cli_mdns.or(c.mdns).unwrap_or(true);
+    let mut mdns = cli_mdns.or(c.mdns).unwrap_or(false); // announce is opt-in
     let mut auth = cli_auth.clone().or(cfg_auth.clone()).unwrap_or(None);
     let mut token = a.token;
 
@@ -205,7 +205,8 @@ mod tests {
         let s = resolve(&args(&[]), &Config::default()).unwrap();
         assert_eq!(s.port, None);
         assert_eq!(s.bind.to_string(), "0.0.0.0");
-        assert!(s.mdns && s.qr && s.zip);
+        assert!(!s.mdns, "mDNS announce is opt-in");
+        assert!(s.qr && s.zip);
         assert!(!s.tls && !s.upload && !s.secure && !s.token);
         assert_eq!(s.auth, None);
         assert_eq!(s.limit, None);
@@ -251,7 +252,7 @@ mod tests {
         assert!(!s.tls && s.token);
         // secure from config, disabled from CLI
         let s = resolve(&args(&["--no-secure"]), &cfg("secure = true")).unwrap();
-        assert!(!s.secure && !s.tls && s.mdns);
+        assert!(!s.secure && !s.tls && !s.mdns, "mdns stays at its off default");
     }
 
     #[test]

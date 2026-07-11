@@ -48,7 +48,7 @@ Persistent defaults live in `~/.config/fshare/config.toml` (or
 
 ```toml
 port = 9000
-mdns = false          # don't announce on the network
+mdns = true           # announce fshare-<hostname>.local on the LAN
 upload = true
 limit = "5MB"         # total download bandwidth
 auth = "ben:secret"   # or `auth = true` for a generated password
@@ -86,7 +86,7 @@ fshare --hidden             # also serve dotfiles (hidden by default)
 fshare --dir-sizes          # show recursive folder sizes in listings
 fshare --no-zip             # disable folder zip downloads
 fshare --no-qr              # skip the QR code
-fshare --no-mdns            # skip fshare-<hostname>.local announcement
+fshare --mdns               # announce fshare-<hostname>.local (off by default)
 fshare --tls                # HTTPS with persisted self-signed cert
 fshare --limit 5M           # cap total download speed (all clients combined)
 fshare --json-log           # JSON-lines event log for scripting
@@ -103,7 +103,7 @@ Extras:
 - `GET /path/?format=json` — machine-readable directory listing
 - `GET /path/?zip` — streamed zip of that folder (no temp files)
 - Range requests supported: browser video seeking and download resume work
-- Announces `http://fshare-<hostname>.local:8000` via mDNS (zero-config, `--no-mdns` to disable)
+- Optional mDNS announcement: `--mdns` (or `mdns = true` in the config) publishes `http://fshare-<hostname>.local:8000`
 - Global download speed cap (`--limit 5M`)
 - Detects other running fshare instances and shows them at startup
 - Shutdown prints a summary: requests served, unique clients, bytes sent

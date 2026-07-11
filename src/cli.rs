@@ -84,12 +84,12 @@ pub struct Args {
     #[arg(long, overrides_with = "auth")]
     pub no_auth: bool,
 
-    /// Don't announce fshare-<hostname>.local via mDNS
-    #[arg(long, overrides_with = "mdns")]
-    pub no_mdns: bool,
-    /// Announce via mDNS (override config)
+    /// Announce fshare-<hostname>.local via mDNS (off by default)
     #[arg(long, overrides_with = "no_mdns")]
     pub mdns: bool,
+    /// Don't announce via mDNS (override config)
+    #[arg(long, overrides_with = "mdns")]
+    pub no_mdns: bool,
 
     /// Serve HTTPS with a persisted self-signed certificate
     #[arg(long, overrides_with = "no_tls")]
