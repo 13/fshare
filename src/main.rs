@@ -109,20 +109,10 @@ async fn async_main(
     state.live.mdns.store(mdns_guard.is_some(), std::sync::atomic::Ordering::Relaxed);
 
     let scheme = if settings.tls { "https" } else { "http" };
+    state.live.tls.store(settings.tls, std::sync::atomic::Ordering::Relaxed);
 
     let tls_config = if settings.tls {
-        let mut sans = vec![
-            format!("{}.local", fshare::mdns::host_label()),
-            fshare::mdns::machine_hostname(),
-            "localhost".to_string(),
-        ];
-        sans.extend(
-            net::ranked_ifaces()
-                .into_iter()
-                .filter(|i| i.kind != net::IfaceKind::Loopback)
-                .map(|i| i.ip.to_string()),
-        );
-        let paths = fshare::tls::load_or_generate(&fshare::tls::data_dir(), &sans)?;
+        let paths = fshare::tls::load_or_generate(&fshare::tls::data_dir(), &tls_sans())?;
         let fp_note = format!(
             "TLS cert fingerprint SHA256: {}{}",
             paths.fingerprint,
@@ -221,15 +211,18 @@ async fn async_main(
     listener.set_nonblocking(true)?;
 
     if use_tui {
-        // server runs as a background task; TUI owns the foreground
-        let server: tokio::task::JoinHandle<Result<(), std::io::Error>> =
-            if let Some(cfg) = tls_config {
-                let srv = axum_server::from_tcp_rustls(listener, cfg)?;
-                tokio::spawn(async move { srv.serve(make).await })
-            } else {
-                let l = tokio::net::TcpListener::from_std(listener)?;
-                tokio::spawn(async move { axum::serve(l, make).await })
-            };
+        // server runs as a background task supervised for live TLS
+        // enablement; TUI owns the foreground
+        let (tls_tx, tls_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+        let server = tokio::spawn(serve_tui(
+            listener,
+            make,
+            tls_config,
+            tls_rx,
+            state.clone(),
+            settings.bind,
+            port,
+        ));
 
         let initial_auth = match &settings.auth {
             Some(Some(v)) if v.contains(':') => Some(v.clone()),
@@ -252,13 +245,13 @@ async fn async_main(
         let info = fshare::tui::ShareInfo { root: root.clone(), single_file, summary };
         let tapp = fshare::tui::App::new(
             state.clone(),
-            scheme,
             port,
             info,
             settings.qr,
             mdns_guard.take(),
             initial_auth,
             seed_notes,
+            Some(tls_tx),
         );
         let expire_owned = async move { expire.await.to_string() };
         let reason = fshare::tui::run(
@@ -300,6 +293,92 @@ async fn async_main(
         fshare::listing::human_size(s.bytes.load(Ordering::Relaxed)),
     );
     Ok(())
+}
+
+fn tls_sans() -> Vec<String> {
+    let mut sans = vec![
+        format!("{}.local", fshare::mdns::host_label()),
+        fshare::mdns::machine_hostname(),
+        "localhost".to_string(),
+    ];
+    sans.extend(
+        net::ranked_ifaces()
+            .into_iter()
+            .filter(|i| i.kind != net::IfaceKind::Loopback)
+            .map(|i| i.ip.to_string()),
+    );
+    sans
+}
+
+/// TUI-mode server supervisor: serves plain HTTP until the TUI signals a
+/// live TLS enable (secure hotkey), then rebinds the same port with the
+/// persisted certificate. Open plain connections drop; the TUI is told
+/// via Setting events. Falls back to plain HTTP if TLS setup fails.
+async fn serve_tui(
+    listener: std::net::TcpListener,
+    make: axum::extract::connect_info::IntoMakeServiceWithConnectInfo<
+        axum::Router,
+        std::net::SocketAddr,
+    >,
+    tls_config: Option<axum_server::tls_rustls::RustlsConfig>,
+    mut tls_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+    state: Arc<server::AppState>,
+    bind: std::net::IpAddr,
+    port: u16,
+) -> Result<(), std::io::Error> {
+    if let Some(cfg) = tls_config {
+        return axum_server::from_tcp_rustls(listener, cfg)?.serve(make).await;
+    }
+    {
+        let l = tokio::net::TcpListener::from_std(listener)?;
+        tokio::select! {
+            r = axum::serve(l, make.clone()) => return r,
+            Some(()) = tls_rx.recv() => {} // dropping the select arm closes the listener
+        }
+    }
+    let note = |t: String| {
+        let _ = state.events.send(fshare::log::Event::Setting { text: t });
+    };
+    let rebind = || -> std::io::Result<std::net::TcpListener> {
+        let sock = std::net::TcpListener::bind(std::net::SocketAddr::new(bind, port))?;
+        sock.set_nonblocking(true)?;
+        Ok(sock)
+    };
+    let tls_cfg = match fshare::tls::load_or_generate(&fshare::tls::data_dir(), &tls_sans()) {
+        Ok(paths) => {
+            match axum_server::tls_rustls::RustlsConfig::from_pem_file(&paths.cert, &paths.key)
+                .await
+            {
+                Ok(cfg) => {
+                    note(format!(
+                        "TLS enabled — cert SHA256 {}{}",
+                        paths.fingerprint,
+                        if paths.generated { " (newly generated)" } else { "" },
+                    ));
+                    Some(cfg)
+                }
+                Err(e) => {
+                    note(format!("TLS enable failed: {e} — staying on plain HTTP"));
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            note(format!("TLS enable failed: {e} — staying on plain HTTP"));
+            None
+        }
+    };
+    match tls_cfg {
+        Some(cfg) => {
+            state.live.tls.store(true, Ordering::Relaxed);
+            note("URLs are https now — reload open pages".to_string());
+            axum_server::from_tcp_rustls(rebind()?, cfg)?.serve(make).await
+        }
+        None => {
+            let l = tokio::net::TcpListener::from_std(rebind()?)?;
+            axum::serve(l, make).await
+        }
+    }
 }
 
 fn dir_summary(root: &std::path::Path) -> (u64, u64) {

@@ -10,6 +10,9 @@ pub struct LiveSettings {
     pub hidden: AtomicBool,
     pub dir_sizes: AtomicBool,
     pub zip: AtomicBool,
+    /// True once the listener actually serves HTTPS. Set by the server
+    /// supervisor (startup --tls, or live enable via the TUI's secure key).
+    pub tls: AtomicBool,
     pub auth: RwLock<Option<String>>, // "user:pass", None = off
     pub base: RwLock<String>,         // "" or "/s/<token>"
 }
@@ -31,6 +34,7 @@ impl LiveSettings {
             hidden: AtomicBool::new(hidden),
             dir_sizes: AtomicBool::new(dir_sizes),
             zip: AtomicBool::new(zip),
+            tls: AtomicBool::new(false),
             auth: RwLock::new(auth),
             base: RwLock::new(base),
         }

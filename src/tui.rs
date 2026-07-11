@@ -37,7 +37,6 @@ pub enum Action {
 
 pub struct App {
     pub state: Arc<AppState>,
-    scheme: &'static str,
     port: u16,
     info: ShareInfo,
     show_qr: bool, // side-panel QR when the terminal is wide enough
@@ -47,23 +46,24 @@ pub struct App {
     mdns_guard: Option<crate::mdns::MdnsGuard>,
     notice: Option<String>,           // e.g. generated credentials, cleared on any key
     initial_auth: Option<String>,     // "user:pass" from CLI/config, reused on re-enable
+    /// Signals the server supervisor to swap the plain listener for TLS.
+    tls_tx: Option<mpsc::UnboundedSender<()>>,
 }
 
 impl App {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         state: Arc<AppState>,
-        scheme: &'static str,
         port: u16,
         info: ShareInfo,
         show_qr: bool,
         mdns_guard: Option<crate::mdns::MdnsGuard>,
         initial_auth: Option<String>,
         seed_notes: Vec<String>,
+        tls_tx: Option<mpsc::UnboundedSender<()>>,
     ) -> Self {
         let mut app = Self {
             state,
-            scheme,
             port,
             info,
             show_qr,
@@ -73,6 +73,7 @@ impl App {
             mdns_guard,
             notice: None,
             initial_auth,
+            tls_tx,
         };
         for n in seed_notes {
             app.push_line(n);
@@ -95,6 +96,11 @@ impl App {
         self.push_line(log::format_pretty(&log::Event::Setting { text: text.to_string() }));
     }
 
+    /// Live scheme — flips to https when the supervisor swaps in TLS.
+    fn scheme(&self) -> &'static str {
+        if self.state.live.tls.load(Relaxed) { "https" } else { "http" }
+    }
+
     pub fn primary_url(&self) -> String {
         let base = self.state.base();
         let host = crate::net::ranked_ifaces()
@@ -104,7 +110,7 @@ impl App {
                 IpAddr::V4(v4) => v4.to_string(),
             })
             .unwrap_or_else(|| "localhost".to_string());
-        format!("{}://{host}:{}{base}/", self.scheme, self.port)
+        format!("{}://{host}:{}{base}/", self.scheme(), self.port)
     }
 
     /// One line per shareable URL: mDNS name first (when announcing), then
@@ -117,7 +123,7 @@ impl App {
         if self.state.live.mdns.load(Relaxed) {
             v.push(format!(
                 "➜ {}://{}.local:{}{base}/    (mDNS)",
-                self.scheme,
+                self.scheme(),
                 crate::mdns::host_label(),
                 self.port
             ));
@@ -143,7 +149,7 @@ impl App {
             let marker = if i == 0 { "➜" } else { " " };
             v.push(format!(
                 "{marker} {}://{host}:{}{base}/    ({kind}{})",
-                self.scheme, self.port, ifc.name
+                self.scheme(), self.port, ifc.name
             ));
         }
         if v.is_empty() {
@@ -167,7 +173,8 @@ impl App {
     }
 
     /// Secure mode is a derived state: auth + token on, mDNS off.
-    /// (TLS is part of the CLI bundle but cannot change at runtime.)
+    /// (TLS enable is triggered alongside but flips asynchronously once
+    /// the supervisor has swapped the listener.)
     pub fn secure_on(&self) -> bool {
         let l = &self.state.live;
         l.auth().is_some() && !l.base().is_empty() && !l.mdns.load(Relaxed)
@@ -294,8 +301,13 @@ impl App {
             self.state.live.mdns.store(false, Relaxed);
         }
         self.note("secure mode — auth on, token URL on, mDNS off");
-        if self.scheme == "http" {
-            self.note("TLS cannot start mid-run — restart with --tls or --secure for encryption");
+        if !self.state.live.tls.load(Relaxed) {
+            match &self.tls_tx {
+                Some(tx) if tx.send(()).is_ok() => {
+                    self.note("enabling TLS — swapping listener, open plain connections drop");
+                }
+                _ => self.note("TLS cannot start mid-run — restart with --tls for encryption"),
+            }
         }
     }
 }
@@ -559,8 +571,8 @@ fn draw_qr_popup(f: &mut Frame, app: &App) {
 
 fn draw_help_popup(f: &mut Frame) {
     let text = "\
- s  secure bundle: auth + token on, mDNS off
-    (TLS needs restart with --tls)
+ s  secure bundle: auth + token on, mDNS off,
+    TLS enabled live (plain connections drop)
  m  toggle mDNS announce
  u  toggle uploads
  a  toggle auth (generated password shown)
@@ -606,7 +618,6 @@ mod tests {
         ));
         App::new(
             state,
-            "http",
             8000,
             ShareInfo {
                 root: "/tmp".into(),
@@ -617,6 +628,7 @@ mod tests {
             None,
             auth,
             vec![],
+            None,
         )
     }
 
@@ -637,8 +649,11 @@ mod tests {
     #[test]
     fn secure_toggle_bundles_auth_token_mdns() {
         let mut app = test_app(None, false);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        app.tls_tx = Some(tx);
         assert!(!app.secure_on());
         app.handle_key(key('s'));
+        assert!(rx.try_recv().is_ok(), "secure on plain HTTP signals the TLS swap");
         assert!(app.state.live.auth().is_some(), "secure enables auth");
         assert!(app.state.live.base().starts_with("/s/"), "secure enables token");
         assert!(!app.state.live.mdns.load(Relaxed), "secure disables mDNS");

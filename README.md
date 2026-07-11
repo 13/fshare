@@ -116,7 +116,7 @@ flip live — no restart:
 
 | Key | Action |
 |-----|--------|
-| `s` | secure bundle: auth + token on, mDNS off (TLS itself needs a restart with `--tls`) |
+| `s` | secure bundle: auth + token on, mDNS off, TLS enabled live (listener swaps — open plain connections drop) |
 | `m` | toggle mDNS announcement |
 | `u` | toggle uploads |
 | `a` | toggle Basic auth (generated password shown) |
