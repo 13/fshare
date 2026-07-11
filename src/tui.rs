@@ -81,8 +81,8 @@ impl App {
         self.log.push_back(line);
         if self.log.len() > LOG_CAP {
             self.log.pop_front();
-            self.scroll = self.scroll.saturating_sub(1);
-        } else if self.scroll > 0 {
+        }
+        if self.scroll > 0 {
             // keep the viewed window stable while scrolled back
             self.scroll = (self.scroll + 1).min(self.log.len().saturating_sub(1));
         }
@@ -251,16 +251,17 @@ pub async fn run(
 
     tokio::pin!(shutdown);
     let mut tick = tokio::time::interval(Duration::from_millis(500));
-    let mut reason: Option<String> = None;
 
-    loop {
-        terminal.draw(|f| draw(f, &app))?;
+    let result: std::io::Result<Option<String>> = loop {
+        if let Err(e) = terminal.draw(|f| draw(f, &app)) {
+            break Err(e);
+        }
         tokio::select! {
             Some(ev) = key_rx.recv() => {
                 if let CEvent::Key(k) = ev {
                     if k.kind == ratatui::crossterm::event::KeyEventKind::Press {
                         if let Action::Quit = app.handle_key(k) {
-                            break;
+                            break Ok(None);
                         }
                     }
                 }
@@ -268,13 +269,13 @@ pub async fn run(
             }
             Some(e) = events.recv() => app.push_line(log::format_pretty(&e)),
             _ = tick.tick() => {} // refresh stats in header
-            r = &mut shutdown => { reason = Some(r); break; }
+            r = &mut shutdown => { break Ok(Some(r)); }
         }
-    }
+    };
 
     drop(app.mdns_guard.take()); // unregister before leaving
     ratatui::restore();
-    Ok(reason)
+    result
 }
 
 fn draw(f: &mut Frame, app: &App) {
@@ -514,6 +515,33 @@ mod tests {
         assert_eq!(app.scroll, 0);
         app.scroll_by(isize::MAX);
         assert_eq!(app.scroll, LOG_CAP - 1);
+    }
+
+    #[test]
+    fn scroll_window_stable_across_ring_trim() {
+        let mut app = test_app(None, false);
+        // fill the ring past capacity so subsequent pushes trigger pop_front
+        for i in 0..LOG_CAP {
+            app.push_line(format!("line {i}"));
+        }
+        assert_eq!(app.log.len(), LOG_CAP);
+
+        // scroll back a bit and record the line at the top of the visible window
+        app.scroll_by(5);
+        assert_eq!(app.scroll, 5);
+        let total = app.log.len();
+        let top_before = app.log[total - 1 - app.scroll].clone();
+
+        // push more lines, forcing the ring to trim (pop_front)
+        for i in 0..10 {
+            app.push_line(format!("new {i}"));
+        }
+        assert_eq!(app.log.len(), LOG_CAP, "ring stays capped");
+
+        // the viewed window must stay stable: same line still at the top offset
+        let total = app.log.len();
+        let top_after = app.log[total - 1 - app.scroll].clone();
+        assert_eq!(top_before, top_after, "scrolled window must not shift on ring trim");
     }
 
     #[test]
