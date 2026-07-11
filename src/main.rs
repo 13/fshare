@@ -203,8 +203,13 @@ fn print_banner(
     }
     println!();
 
+    // address lines as (plain-for-width, colored-for-print)
+    let mut addr_lines: Vec<(String, String)> = Vec::new();
     if mdns_on {
-        println!("  {} {scheme}://fshare.local:{port}{}/    (mDNS)", "➜".green(), state.base);
+        addr_lines.push((
+            format!("➜ {scheme}://fshare.local:{port}{}/    (mDNS)", state.base),
+            format!("{} {scheme}://fshare.local:{port}{}/    (mDNS)", "➜".green(), state.base),
+        ));
     }
     let ifaces = net::ranked_ifaces();
     let mut best_url = None;
@@ -218,21 +223,51 @@ fn print_banner(
             net::IfaceKind::Lan => "LAN, ",
             _ => "",
         };
-        let marker = if i == 0 { "➜".green().to_string() } else { " ".to_string() };
-        println!("  {marker} {url:40} ({kind}{})", ifc.name);
+        let marker_plain = if i == 0 { "➜" } else { " " };
+        let marker_col = if i == 0 { "➜".green().to_string() } else { " ".to_string() };
+        addr_lines.push((
+            format!("{marker_plain} {url:40} ({kind}{})", ifc.name),
+            format!("{marker_col} {url:40} ({kind}{})", ifc.name),
+        ));
         if i == 0 {
             best_url = Some(url);
         }
     }
 
-    if !args.no_qr && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        if let Some(url) = &best_url {
-            if let Ok(code) = qrcode::QrCode::new(url.as_bytes()) {
-                let s = code
-                    .render::<qrcode::render::unicode::Dense1x2>()
+    let show_qr = !args.no_qr && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let qr_lines: Vec<String> = if show_qr {
+        best_url
+            .as_ref()
+            .and_then(|url| qrcode::QrCode::new(url.as_bytes()).ok())
+            .map(|code| {
+                code.render::<qrcode::render::unicode::Dense1x2>()
                     .quiet_zone(true)
-                    .build();
-                println!("\n{}", indent(&s, "  "));
+                    .build()
+                    .lines()
+                    .map(|l| format!("  {l}"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let qr_w = qr_lines.first().map(|l| l.chars().count()).unwrap_or(0);
+    let addr_w = addr_lines.iter().map(|(p, _)| 2 + p.chars().count()).max().unwrap_or(0);
+    let cols = terminal_size::terminal_size().map(|(w, _)| w.0 as usize).unwrap_or(0);
+
+    if !qr_lines.is_empty() && fshare::banner::fits(cols, qr_w, addr_w) {
+        for line in fshare::banner::side_by_side(&qr_lines, &addr_lines) {
+            println!("{line}");
+        }
+    } else {
+        for (_, colored) in &addr_lines {
+            println!("  {colored}");
+        }
+        if !qr_lines.is_empty() {
+            println!();
+            for l in &qr_lines {
+                println!("{l}");
             }
         }
     }
@@ -274,6 +309,3 @@ fn print_banner(
     println!("  Ctrl+C to stop\n");
 }
 
-fn indent(s: &str, pad: &str) -> String {
-    s.lines().map(|l| format!("{pad}{l}")).collect::<Vec<_>>().join("\n")
-}
