@@ -337,44 +337,36 @@ pub async fn run(
 
 fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
-    // QR side panel when enabled and the terminal is wide enough for
-    // both the QR and a useful main column
-    let mut main_area = area;
-    if app.show_qr {
-        if let Some(q) = qr_text(&app.primary_url()) {
-            let qlines: Vec<&str> = q.lines().collect();
-            let qw = qlines.first().map(|l| l.chars().count()).unwrap_or(0) as u16 + 2;
-            let qh = qlines.len() as u16 + 2;
-            if area.width >= qw + 46 && area.height >= qh {
-                let [left, right] =
-                    Layout::horizontal([Constraint::Min(0), Constraint::Length(qw)]).areas(area);
-                let qr_rect = Rect::new(right.x, right.y, right.width, qh.min(right.height));
-                f.render_widget(
-                    Paragraph::new(q).block(Block::default().borders(Borders::ALL).title(" QR ")),
-                    qr_rect,
-                );
-                main_area = left;
-            }
-        }
-    }
-    draw_main(f, app, main_area);
-
-    match app.popup {
-        Popup::Qr => draw_qr_popup(f, app),
-        Popup::Help => draw_help_popup(f),
-        Popup::None => {}
-    }
-}
-
-fn draw_main(f: &mut Frame, app: &App, area: Rect) {
     let urls = app.url_lines();
     let header_h = urls.len() as u16 + 1 + app.notice.is_some() as u16 + 2;
-    let [header, logs, bar] = Layout::vertical([
+    // header and hotkey bar span the full width (URLs are long); the QR
+    // panel takes a right column of the log region only, bottom-aligned
+    // so it sits flush with the hotkey bar
+    let [header, body, bar] = Layout::vertical([
         Constraint::Length(header_h),
         Constraint::Min(3),
         Constraint::Length(1),
     ])
     .areas(area);
+
+    let mut logs = body;
+    if app.show_qr {
+        if let Some(q) = qr_text(&app.primary_url()) {
+            let qlines: Vec<&str> = q.lines().collect();
+            let qw = qlines.first().map(|l| l.chars().count()).unwrap_or(0) as u16 + 2;
+            let qh = qlines.len() as u16 + 2;
+            if body.width >= qw + 44 && body.height >= qh {
+                let [left, right] =
+                    Layout::horizontal([Constraint::Min(0), Constraint::Length(qw)]).areas(body);
+                logs = left;
+                let qr_rect = Rect::new(right.x, right.y + right.height - qh, right.width, qh);
+                f.render_widget(
+                    Paragraph::new(q).block(Block::default().borders(Borders::ALL).title(" QR ")),
+                    qr_rect,
+                );
+            }
+        }
+    }
 
     // header
     let title = if app.info.single_file {
@@ -447,6 +439,12 @@ fn draw_main(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::DarkGray),
     ));
     f.render_widget(Paragraph::new(Line::from(spans)), bar);
+
+    match app.popup {
+        Popup::Qr => draw_qr_popup(f, app),
+        Popup::Help => draw_help_popup(f),
+        Popup::None => {}
+    }
 }
 
 fn qr_text(url: &str) -> Option<String> {
@@ -692,6 +690,24 @@ mod tests {
         let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
         assert!(text.contains(" QR "), "QR side panel visible on wide terminal");
         assert!(text.contains("[m]mdns"), "hotbar still present");
+        // bottom-aligned: the QR block's bottom border sits on the row just
+        // above the hotkey bar (last row), i.e. row height-2
+        let (w, h) = (120usize, 40usize);
+        let rows: Vec<String> = (0..h)
+            .map(|y| (0..w).map(|x| buf.content()[y * w + x].symbol()).collect())
+            .collect();
+        let qr_title_row = rows.iter().position(|r| r.contains(" QR ")).unwrap();
+        assert!(qr_title_row > 0, "QR panel not glued to the top");
+        // exact last column: only the QR panel reaches x = w-1
+        assert!(
+            rows[h - 2].ends_with('┘'),
+            "QR bottom-right corner flush with hotkey bar: {:?}",
+            rows[h - 2]
+        );
+        assert!(
+            !rows[qr_title_row - 1].ends_with('│'),
+            "nothing above the QR panel in the right column"
+        );
 
         // too narrow: main layout only, no QR panel
         let backend = TestBackend::new(60, 20);
