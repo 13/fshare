@@ -223,12 +223,21 @@ async fn async_main(
             Some(Some(v)) if v.contains(':') => Some(v.clone()),
             _ => state.live.auth(), // generated or None — reuse what's active
         };
-        let (files, bytes) = if single_file {
-            (1, root.metadata().map(|m| m.len()).unwrap_or(0))
+        // big trees take a while to walk — fill the summary in the
+        // background so the TUI appears instantly ("counting…" meanwhile)
+        let summary: Arc<std::sync::Mutex<Option<(u64, u64)>>> = Arc::default();
+        if single_file {
+            *summary.lock().unwrap() =
+                Some((1, root.metadata().map(|m| m.len()).unwrap_or(0)));
         } else {
-            dir_summary(&root)
-        };
-        let info = fshare::tui::ShareInfo { root: root.clone(), single_file, files, bytes };
+            let s = summary.clone();
+            let r = root.clone();
+            tokio::task::spawn_blocking(move || {
+                let v = dir_summary(&r);
+                *s.lock().unwrap() = Some(v);
+            });
+        }
+        let info = fshare::tui::ShareInfo { root: root.clone(), single_file, summary };
         let tapp = fshare::tui::App::new(
             state.clone(),
             scheme,

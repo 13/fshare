@@ -15,12 +15,12 @@ use tokio::sync::mpsc;
 
 const LOG_CAP: usize = 1000;
 
-/// Immutable share facts for the header line.
+/// Share facts for the header line. `summary` is filled by a background
+/// walk (big trees take a while); the header shows "counting…" until then.
 pub struct ShareInfo {
     pub root: std::path::PathBuf,
     pub single_file: bool,
-    pub files: u64,
-    pub bytes: u64,
+    pub summary: Arc<std::sync::Mutex<Option<(u64, u64)>>>, // (files, bytes)
 }
 
 #[derive(PartialEq)]
@@ -356,18 +356,13 @@ fn draw(f: &mut Frame, app: &App) {
     let mut logs = body;
     if app.show_qr {
         if let Some(q) = qr_text(&app.primary_url()) {
-            let qlines: Vec<&str> = q.lines().collect();
-            let qw = qlines.first().map(|l| l.chars().count()).unwrap_or(0) as u16 + 2;
-            let qh = qlines.len() as u16 + 2;
+            let (qw, qh) = qr_size(&q);
             if body.width >= qw + 44 && body.height >= qh {
                 let [left, right] =
                     Layout::horizontal([Constraint::Length(qw), Constraint::Min(0)]).areas(body);
                 logs = right;
                 let qr_rect = Rect::new(left.x, left.y + left.height - qh, left.width, qh);
-                f.render_widget(
-                    Paragraph::new(q).block(Block::default().borders(Borders::ALL).title(" QR ")),
-                    qr_rect,
-                );
+                f.render_widget(Paragraph::new(q).block(qr_block()), qr_rect);
             }
         }
     }
@@ -376,13 +371,19 @@ fn draw(f: &mut Frame, app: &App) {
     let title = if app.info.single_file {
         format!(" fshare v{} — sharing file {} ", env!("CARGO_PKG_VERSION"), app.info.root.display())
     } else {
-        format!(
-            " fshare v{} — {} ({} files, {}) ",
-            env!("CARGO_PKG_VERSION"),
-            app.info.root.display(),
-            app.info.files,
-            crate::listing::human_size(app.info.bytes),
-        )
+        match *app.info.summary.lock().unwrap() {
+            Some((files, bytes)) => format!(
+                " fshare v{} — {} ({files} files, {}) ",
+                env!("CARGO_PKG_VERSION"),
+                app.info.root.display(),
+                crate::listing::human_size(bytes),
+            ),
+            None => format!(
+                " fshare v{} — {} (counting…) ",
+                env!("CARGO_PKG_VERSION"),
+                app.info.root.display(),
+            ),
+        }
     };
     let stats = &app.state.stats;
     let status = format!(
@@ -451,10 +452,28 @@ fn draw(f: &mut Frame, app: &App) {
     }
 }
 
+/// Compact QR: lowest error-correction level (fewer modules) and no
+/// built-in quiet zone — the bordered block's padding provides the
+/// light margin scanners need.
 fn qr_text(url: &str) -> Option<String> {
-    qrcode::QrCode::new(url.as_bytes()).ok().map(|c| {
-        c.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build()
-    })
+    qrcode::QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::L)
+        .ok()
+        .map(|c| c.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(false).build())
+}
+
+fn qr_block() -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .padding(ratatui::widgets::Padding::new(2, 2, 1, 1))
+        .title(" QR ")
+}
+
+/// Outer size of the QR panel including borders and padding.
+fn qr_size(rendered: &str) -> (u16, u16) {
+    let lines: Vec<&str> = rendered.lines().collect();
+    let w = lines.first().map(|l| l.chars().count()).unwrap_or(0) as u16 + 2 + 4;
+    let h = lines.len() as u16 + 2 + 2;
+    (w, h)
 }
 
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
@@ -468,9 +487,7 @@ fn draw_qr_popup(f: &mut Frame, app: &App) {
     let Some(rendered) = qr_text(&url) else {
         return;
     };
-    let lines: Vec<&str> = rendered.lines().collect();
-    let w = lines.first().map(|l| l.chars().count()).unwrap_or(0) as u16 + 2;
-    let h = lines.len() as u16 + 2;
+    let (w, h) = qr_size(&rendered);
     let area = f.area();
     if w > area.width || h > area.height {
         let r = centered(area, 30, 3);
@@ -483,10 +500,7 @@ fn draw_qr_popup(f: &mut Frame, app: &App) {
     }
     let r = centered(area, w, h);
     f.render_widget(Clear, r);
-    f.render_widget(
-        Paragraph::new(rendered).block(Block::default().borders(Borders::ALL).title(format!(" {url} "))),
-        r,
-    );
+    f.render_widget(Paragraph::new(rendered).block(qr_block().title(format!(" {url} "))), r);
 }
 
 fn draw_help_popup(f: &mut Frame) {
@@ -539,7 +553,11 @@ mod tests {
             state,
             "http",
             8000,
-            ShareInfo { root: "/tmp".into(), single_file: false, files: 3, bytes: 1024 },
+            ShareInfo {
+                root: "/tmp".into(),
+                single_file: false,
+                summary: Arc::new(std::sync::Mutex::new(Some((3, 1024)))),
+            },
             false,
             None,
             auth,
@@ -681,6 +699,24 @@ mod tests {
         // lo is excluded by kind, not by name
         let app = test_app(None, false);
         assert!(app.url_lines().iter().all(|l| !l.contains("(lo)")));
+    }
+
+    #[test]
+    fn header_shows_counting_until_summary_arrives() {
+        let app = test_app(None, false);
+        *app.info.summary.lock().unwrap() = None;
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("counting"), "placeholder while walking the tree");
+
+        *app.info.summary.lock().unwrap() = Some((42, 2048));
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("42 files"), "summary appears once counted");
     }
 
     #[test]
