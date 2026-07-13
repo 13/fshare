@@ -16,7 +16,7 @@ header { display:flex; justify-content:space-between; align-items:baseline;
 a { color:var(--accent); text-decoration:none } a:hover { text-decoration:underline }
 .logo { width:22px; height:22px; vertical-align:-5px; margin-right:.5em }
 .navbtns { display:none }
-@media (max-width:480px){
+@media (max-width:640px){
   header { flex-direction:column; align-items:flex-start; gap:.5rem }
   .navbtns { display:flex; gap:.6em }
   .navbtns a { font-size:1.1em; padding:.1em .5em; border:1px solid var(--line); border-radius:6px }
@@ -28,9 +28,29 @@ table { width:100%; border-collapse:collapse }
 th { text-align:left; cursor:pointer; user-select:none; color:var(--muted);
   font-weight:600; font-size:.85em; padding:.4em .5em; border-bottom:1px solid var(--line) }
 td { padding:.35em .5em; border-bottom:1px solid var(--line) }
+tbody tr { cursor:pointer }
+tbody tr:hover { background:color-mix(in srgb, var(--line) 40%, transparent) }
+tbody tr:active { background:var(--line) }
 td.s, th.s { text-align:right; white-space:nowrap; color:var(--muted) }
 td.d, th.d { text-align:right; white-space:nowrap; color:var(--muted); font-size:.9em }
-@media (max-width:480px){ td.d, th.d { display:none } }
+.sortbar { display:none }
+@media (max-width:640px){
+  .sortbar { display:flex; align-items:center; gap:.45em; margin:.8em 0 .3em;
+    color:var(--muted); font-size:.85em }
+  .sortbar button { font:inherit; color:var(--fg); background:none; cursor:pointer;
+    border:1px solid var(--line); border-radius:999px; padding:.25em .8em }
+  .sortbar button.on { border-color:var(--accent); color:var(--accent) }
+  thead { display:none }
+  table, tbody { display:block }
+  tr { display:flex; flex-wrap:wrap; column-gap:.35em; padding:.55em 0;
+    border-bottom:1px solid var(--line) }
+  td { display:block; padding:0; border:none }
+  td:empty { display:none }
+  td.n { flex:1 1 100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  td.d { order:2; font-size:.8em }
+  td.s { order:3; font-size:.8em }
+  td.s:not(:empty)::before { content:"· " }
+}
 </style>
 <header>
   <nav><img class="logo" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA5NiA5NiIgd2lkdGg9Ijk2IiBoZWlnaHQ9Ijk2Ij4KICA8IS0tIHNoYXJlIGFyY3MgcmFkaWF0aW5nIGZyb20gdGhlIGZvbGRlcidzIHRvcC1yaWdodCBjb3JuZXIgLS0+CiAgPGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMGI2Y2ZmIiBzdHJva2UtbGluZWNhcD0icm91bmQiPgogICAgPHBhdGggZD0iTTc2IDMwIEEgMTIgMTIgMCAwIDAgNjQgMTgiIHN0cm9rZS13aWR0aD0iNSIgb3BhY2l0eT0iLjkiLz4KICAgIDxwYXRoIGQ9Ik04NSAzMCBBIDIxIDIxIDAgMCAwIDY0IDkiIHN0cm9rZS13aWR0aD0iNSIgb3BhY2l0eT0iLjYiLz4KICAgIDxwYXRoIGQ9Ik05NCAzMCBBIDMwIDMwIDAgMCAwIDY0IDAiIHN0cm9rZS13aWR0aD0iNSIgb3BhY2l0eT0iLjMiLz4KICA8L2c+CiAgPCEtLSBmb2xkZXIgLS0+CiAgPHBhdGggZmlsbD0iIzBiNmNmZiIgZD0iTTggMzRjMC0zLjMgMi43LTYgNi02aDE3bDggOGgyMWMzLjMgMCA2IDIuNyA2IDZ2NEg4VjM0eiIvPgogIDxwYXRoIGZpbGw9IiMwYjZjZmYiIG9wYWNpdHk9Ii44NSIKICAgICAgICBkPSJNMTAgNTBoNTZjMy44IDAgNi43IDMuNCA1LjkgNy4xbC00LjYgMjRDNjYuNyA4NCA2NC4yIDg2IDYxLjQgODZIMTQuNmMtMi44IDAtNS4zLTItNS45LTQuOWwtNC42LTI0QzMuMyA1My40IDYuMiA1MCAxMCA1MHoiLz4KICA8Y2lyY2xlIGN4PSI2NCIgY3k9IjMwIiByPSI0LjUiIGZpbGw9IiMwYjZjZmYiLz4KPC9zdmc+Cg==" alt="">{{crumbs}}</nav>
@@ -38,6 +58,7 @@ td.d, th.d { text-align:right; white-space:nowrap; color:var(--muted); font-size
   {{zip}}
 </header>
 {{upload}}
+<nav class="sortbar">Sort: <button data-k="0">Name</button><button data-k="1">Size</button><button data-k="2">Date</button></nav>
 <table id="t">
   <thead><tr><th data-k="0">Name</th><th class="s" data-k="1">Size</th><th class="d" data-k="2">Modified</th></tr></thead>
   <tbody>{{rows}}</tbody>
@@ -46,13 +67,23 @@ td.d, th.d { text-align:right; white-space:nowrap; color:var(--muted); font-size
   <a href="https://github.com/13/fshare">fshare</a> v{{version}} · built {{built}}
 </footer>
 <script>
-document.querySelectorAll('th').forEach(th => th.onclick = () => {
-  const k = +th.dataset.k, tb = document.querySelector('#t tbody');
-  const dir = th.dataset.dir = th.dataset.dir === 'a' ? 'd' : 'a';
-  [...tb.rows].sort((a, b) => {
+document.querySelectorAll('th, .sortbar button').forEach(el => el.onclick = () => {
+  const k = +el.dataset.k, tb = document.querySelector('#t tbody');
+  const dir = el.dataset.dir = el.dataset.dir === 'a' ? 'd' : 'a';
+  [...tb.rows].filter(r => !r.classList.contains('up')).sort((a, b) => {
+    const g = b.classList.contains('dir') - a.classList.contains('dir');
+    if (g) return g;
     const [x, y] = [a, b].map(r => r.cells[k]?.dataset.s ?? r.cells[k]?.textContent ?? '');
     const n = (+x || +y) ? (+x) - (+y) : x.localeCompare(y);
     return dir === 'a' ? n : -n;
   }).forEach(r => tb.appendChild(r));
+  document.querySelectorAll('.sortbar button').forEach(b => {
+    b.classList.toggle('on', b === el);
+    b.textContent = b.textContent.replace(/ [↑↓]$/, '') + (b === el ? (dir === 'a' ? ' ↑' : ' ↓') : '');
+  });
+});
+document.querySelectorAll('#t tbody tr').forEach(tr => {
+  const a = tr.querySelector('td.n a');
+  if (a) tr.onclick = e => { if (!e.target.closest('a')) a.click(); };
 });
 </script>

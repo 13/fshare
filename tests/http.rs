@@ -81,6 +81,33 @@ async fn serves_listing_and_files() {
 }
 
 #[tokio::test]
+async fn listing_dates_visible_on_mobile() {
+    let t = fixture();
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
+    let html = reqwest::get(format!("{base}/")).await.unwrap().text().await.unwrap();
+    // narrow screens show name, date + HH:MM and size; nothing hidden
+    assert!(!html.contains("td.d, th.d { display:none }"));
+    assert!(!html.contains(".tm { display:none }"));
+    assert!(html.contains(r#"<span class="tm">"#));
+    // mobile sort bar replaces the hidden table header
+    assert!(html.contains(r#"class="sortbar""#));
+    // breakpoint must cover large phones (e.g. Galaxy Ultra: 480 CSS px portrait)
+    assert!(html.contains("max-width:640px"));
+}
+
+#[tokio::test]
+async fn listing_marks_dirs_for_grouped_sort() {
+    let t = fixture();
+    let (base, _st, _h) = spawn(t.path().into(), false, false).await;
+    // dir rows carry a class so client-side sort can keep dirs and files separate
+    let html = reqwest::get(format!("{base}/")).await.unwrap().text().await.unwrap();
+    assert!(html.contains(r#"<tr class="dir">"#));
+    // parent-dir row is marked so it stays pinned above sorted rows
+    let sub = reqwest::get(format!("{base}/sub/")).await.unwrap().text().await.unwrap();
+    assert!(sub.contains(r#"<tr class="up">"#));
+}
+
+#[tokio::test]
 async fn json_listing() {
     let t = fixture();
     let (base, _st, _h) = spawn(t.path().into(), false, false).await;

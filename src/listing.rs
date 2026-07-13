@@ -187,7 +187,7 @@ pub fn render_html(
     let mut rows = String::new();
     if !rel_path.is_empty() {
         rows.push_str(&format!(
-            r#"<tr><td class="n"><a href="{dir_url}/..">../</a></td><td></td><td></td></tr>"#
+            r#"<tr class="up"><td class="n"><a href="{dir_url}/..">../</a></td><td></td><td></td></tr>"#
         ));
     }
     for e in entries {
@@ -200,10 +200,11 @@ pub fn render_html(
             if e.is_dir && !dir_sizes { String::new() } else { human_size(e.size) };
         let sort_size = e.size;
         let date = chrono::DateTime::from_timestamp(e.mtime, 0)
-            .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+            .map(|d| d.format(r#"%Y-%m-%d <span class="tm">%H:%M</span>"#).to_string())
             .unwrap_or_default();
+        let cls = if e.is_dir { r#" class="dir""# } else { "" };
         rows.push_str(&format!(
-            r#"<tr><td class="n" data-s="{n}"><a href="{href}">{icon} {name_disp}{slash}</a></td><td class="s" data-s="{sort_size}">{size}</td><td class="d" data-s="{mt}">{date}</td></tr>"#,
+            r#"<tr{cls}><td class="n" data-s="{n}"><a href="{href}">{icon} {name_disp}{slash}</a></td><td class="s" data-s="{sort_size}">{size}</td><td class="d" data-s="{mt}">{date}</td></tr>"#,
             n = name_disp,
             mt = e.mtime,
         ));
