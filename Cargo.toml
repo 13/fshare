@@ -10,11 +10,11 @@ axum = { version = "0.8", features = ["multipart"] }
 base64 = "0.22"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.7", features = ["fs"] }
 clap = { version = "4", features = ["derive"] }
 qrcode = { version = "0.14", default-features = false }
-if-addrs = "0.13"
-async_zip = { version = "0.0.17", features = ["tokio", "deflate"] }
+if-addrs = "0.15"
+async_zip = { version = "0.0.18", features = ["tokio", "deflate"] }
 walkdir = "2"
 percent-encoding = "2"
 pin-project-lite = "0.2"
@@ -22,8 +22,8 @@ tokio-util = { version = "0.7", features = ["io", "compat"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 owo-colors = "4"
-dns-lookup = "2"
-rand = "0.8"
+dns-lookup = "3"
+rand = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 http-body = "1"
 bytes = "1"
@@ -37,13 +37,13 @@ axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 async-speed-limit = "0.4.2"
 terminal_size = "0.4.4"
 toml = "1.1.2"
-ratatui = "0.29"
+ratatui = "0.30"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
-reqwest = { version = "0.12", features = ["json", "multipart"] }
+reqwest = { version = "0.13", features = ["json", "multipart"] }
 tempfile = "3"
-zip = "2"
+zip = "8"
 
 [profile.release]
 lto = true

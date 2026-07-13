@@ -4,7 +4,7 @@ use axum::http::{header, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Arc;
 
 pub async fn require(State(st): State<Arc<AppState>>, req: Request, next: Next) -> Response {
@@ -34,9 +34,9 @@ pub async fn require(State(st): State<Arc<AppState>>, req: Request, next: Next) 
 const PW_ALPHABET: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 pub fn gen_password() -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..10)
-        .map(|_| PW_ALPHABET[rng.gen_range(0..PW_ALPHABET.len())] as char)
+        .map(|_| PW_ALPHABET[rng.random_range(0..PW_ALPHABET.len())] as char)
         .collect()
 }
 

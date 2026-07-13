@@ -10,7 +10,7 @@ use axum::{
 use bytes::Bytes;
 use percent_encoding::percent_decode_str;
 use pin_project_lite::pin_project;
-use rand::Rng;
+use rand::RngExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -119,8 +119,8 @@ impl AppState {
 
 pub fn gen_token() -> String {
     const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut rng = rand::thread_rng();
-    (0..12).map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char).collect()
+    let mut rng = rand::rng();
+    (0..12).map(|_| CHARS[rng.random_range(0..CHARS.len())] as char).collect()
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
