@@ -11,6 +11,7 @@ pub mod log;
 pub mod mdns;
 pub mod net;
 pub mod server;
+pub mod stats;
 pub mod tls;
 pub mod tui;
 pub mod upload;

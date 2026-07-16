@@ -198,11 +198,11 @@ async fn counts_completed_downloads() {
     });
     reqwest::get(format!("http://{addr}/hello.txt")).await.unwrap().bytes().await.unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    assert_eq!(state.downloads_done.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(state.stats.downloads_done.load(std::sync::atomic::Ordering::Relaxed), 1);
     // listing does not count
     reqwest::get(format!("http://{addr}/")).await.unwrap().text().await.unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    assert_eq!(state.downloads_done.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(state.stats.downloads_done.load(std::sync::atomic::Ordering::Relaxed), 1);
 }
 
 #[tokio::test]

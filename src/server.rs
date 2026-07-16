@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 use std::time::Instant;
@@ -59,9 +59,7 @@ pub struct AppState {
     pub max_upload: Option<u64>,
     pub live: Arc<crate::live::LiveSettings>,
     pub events: tokio::sync::mpsc::UnboundedSender<crate::log::Event>,
-    pub stats: Arc<Stats>,
-    pub downloads_done: Arc<AtomicU64>,
-    pub download_signal: Arc<tokio::sync::Notify>,
+    pub stats: Arc<crate::stats::Stats>,
     pub limiter: Option<async_speed_limit::Limiter>,
 }
 
@@ -93,8 +91,6 @@ impl AppState {
             live,
             events,
             stats: Arc::default(),
-            downloads_done: Arc::default(),
-            download_signal: Arc::default(),
             limiter: limit.map(|n| async_speed_limit::Limiter::new(n as f64)),
         }
     }
@@ -358,13 +354,6 @@ where
     }
 }
 
-#[derive(Default)]
-pub struct Stats {
-    pub requests: AtomicU64,
-    pub bytes: AtomicU64,
-    pub clients: std::sync::Mutex<std::collections::HashSet<std::net::IpAddr>>,
-}
-
 pub async fn track(
     State(st): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -405,8 +394,8 @@ pub async fn track(
         st2.stats.bytes.fetch_add(bytes, Ordering::Relaxed);
         if completed && counts_as_download {
             // increment before notify so expiry's recheck sees the final count
-            st2.downloads_done.fetch_add(1, Ordering::Relaxed);
-            st2.download_signal.notify_waiters();
+            st2.stats.downloads_done.fetch_add(1, Ordering::Relaxed);
+            st2.stats.download_signal.notify_waiters();
         }
         let _ = events.send(crate::log::Event::Done {
             ip,

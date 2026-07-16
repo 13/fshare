@@ -200,12 +200,7 @@ async fn async_main(
 
     let app = server::router(state.clone());
 
-    let expire = expiry::wait(
-        args.timeout,
-        args.max_downloads,
-        state.downloads_done.clone(),
-        state.download_signal.clone(),
-    );
+    let expire = expiry::wait(args.timeout, args.max_downloads, state.stats.clone());
 
     let make = app.into_make_service_with_connect_info::<std::net::SocketAddr>();
     listener.set_nonblocking(true)?;
