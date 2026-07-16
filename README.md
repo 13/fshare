@@ -1,4 +1,4 @@
-<img src="assets/logo.svg" width="96" align="left">
+<img src="assets/icon-small.svg" width="96" align="left">
 
 # fshare
 
