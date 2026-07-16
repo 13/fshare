@@ -227,6 +227,7 @@ pub fn render_html(
         .replace("{{rows}}", &rows)
         .replace("{{version}}", env!("CARGO_PKG_VERSION"))
         .replace("{{built}}", env!("FSHARE_BUILD_DATE"))
+        .replace("{{logo}}", include_str!("logo.b64").trim_end())
 }
 
 #[cfg(test)]
@@ -267,6 +268,8 @@ mod tests {
         assert!(html.contains("docs")); // breadcrumb
         let noz = render_html("", &entries, "", false, false, false);
         assert!(!noz.contains("?zip"));
+        assert!(!noz.contains("{{logo}}")); // placeholder filled
+        assert_eq!(noz.matches("data:image/svg+xml;base64,").count(), 2); // favicon + header
     }
 
     #[test]
