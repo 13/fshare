@@ -67,6 +67,12 @@ td.d, th.d { text-align:right; white-space:nowrap; color:var(--muted); font-size
   <a href="https://github.com/13/fshare">fshare</a> v{{version}} · built {{built}}
 </footer>
 <script>
+document.querySelectorAll('td.d[data-s]').forEach(td => {
+  const d = new Date(td.dataset.s * 1000), p = n => String(n).padStart(2, '0');
+  if (isNaN(d)) return;
+  td.innerHTML = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `<span class="tm">${p(d.getHours())}:${p(d.getMinutes())}</span>`;
+});
 document.querySelectorAll('th, .sortbar button').forEach(el => el.onclick = () => {
   const k = +el.dataset.k, tb = document.querySelector('#t tbody');
   const dir = el.dataset.dir = el.dataset.dir === 'a' ? 'd' : 'a';

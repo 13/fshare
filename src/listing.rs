@@ -270,6 +270,15 @@ mod tests {
     }
 
     #[test]
+    fn date_cells_reformatted_to_local_time_client_side() {
+        let entries =
+            vec![Entry { name: "a.txt".into(), is_dir: false, size: 5, mtime: 1752000000 }];
+        let html = render_html("", &entries, "", false, false, false);
+        assert!(html.contains(r#"data-s="1752000000""#)); // epoch for client JS
+        assert!(html.contains("td.d[data-s]")); // client-side local-time rewrite
+    }
+
+    #[test]
     fn icons_by_extension() {
         assert_eq!(icon_for("x", true), "📁");
         assert_eq!(icon_for("a.PNG", false), "🖼️");
