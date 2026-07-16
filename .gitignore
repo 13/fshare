@@ -4,3 +4,5 @@ packaging/aur/**/*.tar.gz
 packaging/aur/**/*.tar.zst
 packaging/aur/**/pkg/
 packaging/aur/**/src/
+/graphify-out
+/.playwright-mcp
