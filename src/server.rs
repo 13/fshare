@@ -198,9 +198,29 @@ async fn handle(
 
     // file: delegate to ServeDir for Range/ETag/MIME
     match ServeDir::new(&st.root).oneshot(req).await {
-        Ok(res) => res.map(Body::new),
+        Ok(res) => defuse_text_plain(res.map(Body::new)),
         Err(_) => not_found_res(accept_html),
     }
+}
+
+// mime_guess maps ~65 extensions (.map, .py, .log, .ini, .conf, .c, ...) to
+// `text/plain`. Android's DownloadManager appends `.txt` to reconcile the name
+// with that MIME type (foo.map -> foo.map.txt). Rewrite to octet-stream so the
+// filename is preserved. Only `text/plain` is affected; real HTML/CSS/JS get
+// their own MIME and stay inline.
+fn defuse_text_plain(mut res: Response) -> Response {
+    let is_plain = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.trim_start().starts_with("text/plain"));
+    if is_plain {
+        res.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/octet-stream"),
+        );
+    }
+    res
 }
 
 async fn serve_single(st: &AppState, accept_html: bool, req: Request) -> Response {
@@ -208,7 +228,7 @@ async fn serve_single(st: &AppState, accept_html: bool, req: Request) -> Respons
     let name = st.root.file_name().unwrap_or_default().to_string_lossy().into_owned();
     match ServeFile::new(&st.root).oneshot(req).await {
         Ok(res) => {
-            let mut res = res.map(Body::new);
+            let mut res = defuse_text_plain(res.map(Body::new));
             let cd = format!("attachment; filename=\"{name}\"");
             if let Ok(v) = header::HeaderValue::from_str(&cd) {
                 res.headers_mut().insert(header::CONTENT_DISPOSITION, v);
