@@ -111,6 +111,8 @@ pub struct App {
     log: VecDeque<String>,
     scroll: usize, // lines above the bottom; 0 = follow
     popup: Popup,
+    /// Manually chosen primary address; `None` follows the ranked best.
+    sel: Option<SelKey>,
     mdns_guard: Option<crate::mdns::MdnsGuard>,
     notice: Option<String>,           // e.g. generated credentials, cleared on any key
     initial_auth: Option<String>,     // "user:pass" from CLI/config, reused on re-enable
@@ -142,6 +144,7 @@ impl App {
             log: VecDeque::new(),
             scroll: 0,
             popup: Popup::None,
+            sel: None,
             mdns_guard,
             notice: None,
             initial_auth,
@@ -211,8 +214,33 @@ impl App {
             .collect()
     }
 
-    pub fn selected_index(&self, _entries: &[UrlEntry]) -> usize {
-        0
+    /// Resolves the selection against a freshly built list. A selected
+    /// address that is momentarily gone (interface down, mDNS off) falls back
+    /// to the ranked best *without* clearing `sel`, so it snaps back when the
+    /// address returns.
+    pub fn selected_index(&self, entries: &[UrlEntry]) -> usize {
+        self.sel
+            .as_ref()
+            .and_then(|k| entries.iter().position(|e| &e.key == k))
+            .unwrap_or(0)
+    }
+
+    /// Cycling core, split out so it can be tested with synthetic entries
+    /// instead of whatever interfaces the test machine happens to have.
+    fn cycle_in(&mut self, entries: &[UrlEntry], delta: isize) {
+        if entries.len() < 2 {
+            return;
+        }
+        let cur = self.selected_index(entries) as isize;
+        let next = (cur + delta).rem_euclid(entries.len() as isize) as usize;
+        self.sel = Some(entries[next].key.clone());
+        let url = entries[next].url.clone();
+        self.note(&format!("primary address: {url}"));
+    }
+
+    fn cycle(&mut self, delta: isize) {
+        let entries = self.url_entries();
+        self.cycle_in(&entries, delta);
     }
 
     /// (key, label, on) triples for the hotkey bar, in display order.
@@ -854,5 +882,52 @@ mod tests {
         app.handle_key(key('m'));
         assert!(matches!(app.popup, Popup::None), "any key closes popup");
         assert!(!app.state.live.mdns.load(Relaxed), "close key must not toggle");
+    }
+
+    #[test]
+    fn cycle_wraps_both_directions_and_noops_on_single_entry() {
+        let all = [iface("wlan0", "192.168.1.112"), iface("eth0", "172.23.246.136")];
+        let entries = entries_from(&all, true, "http", 8000, ""); // mDNS + 2 ifaces
+        assert_eq!(entries.len(), 3);
+        let mut app = test_app(None, false);
+        assert_eq!(app.selected_index(&entries), 0, "defaults to the ranked best");
+
+        app.cycle_in(&entries, 1);
+        assert_eq!(app.selected_index(&entries), 1);
+        app.cycle_in(&entries, 1);
+        assert_eq!(app.selected_index(&entries), 2);
+        app.cycle_in(&entries, 1);
+        assert_eq!(app.selected_index(&entries), 0, "wraps forward");
+        app.cycle_in(&entries, -1);
+        assert_eq!(app.selected_index(&entries), 2, "wraps backward");
+
+        // switching logs a line, so the operator sees what changed
+        assert!(app.log.iter().any(|l| l.contains("primary address:")));
+
+        let single = entries_from(&[iface("wlan0", "192.168.1.112")], false, "http", 8000, "");
+        let before = app.sel.clone();
+        app.cycle_in(&single, 1);
+        assert_eq!(app.sel, before, "single entry: selection untouched");
+    }
+
+    #[test]
+    fn selection_survives_scheme_base_and_iface_churn() {
+        let all = [iface("wlan0", "192.168.1.112"), iface("eth0", "172.23.246.136")];
+        let mut app = test_app(None, false);
+        let plain = entries_from(&all, false, "http", 8000, "");
+        app.cycle_in(&plain, 1); // select eth0
+        assert_eq!(app.selected_index(&plain), 1);
+
+        // secure bundle flips scheme and adds a token base: same selection
+        let secure = entries_from(&all, false, "https", 8000, "/s/tok");
+        assert_eq!(app.selected_index(&secure), 1);
+        assert_eq!(secure[1].url, "https://172.23.246.136:8000/s/tok/");
+
+        // the selected interface drops: fall back to the first entry
+        let gone = entries_from(&[iface("wlan0", "192.168.1.112")], false, "http", 8000, "");
+        assert_eq!(app.selected_index(&gone), 0);
+
+        // …and come back to it when the interface returns
+        assert_eq!(app.selected_index(&plain), 1, "choice is not forgotten");
     }
 }
