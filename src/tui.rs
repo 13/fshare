@@ -98,6 +98,14 @@ fn entries_from(
     v
 }
 
+/// The default primary entry when the operator hasn't pressed Tab: the
+/// first IP-address entry, so mDNS announcing never silently repoints the
+/// marker/QR at `.local`. Falls back to index 0 for the (rare) case of an
+/// all-mDNS list with no IP entry at all.
+fn default_index(entries: &[UrlEntry]) -> usize {
+    entries.iter().position(|e| matches!(e.key, SelKey::Ip(_))).unwrap_or(0)
+}
+
 pub enum Action {
     None,
     Quit,
@@ -214,15 +222,18 @@ impl App {
             .collect()
     }
 
-    /// Resolves the selection against a freshly built list. A selected
-    /// address that is momentarily gone (interface down, mDNS off) falls back
-    /// to the ranked best *without* clearing `sel`, so it snaps back when the
+    /// Resolves the selection against a freshly built list. `None` (no Tab
+    /// pressed yet) defaults to the first IP-address entry, never the mDNS
+    /// `.local` entry — `.local` resolves unreliably on some phone browsers
+    /// and the QR code is the primary sharing path. A selected address that
+    /// is momentarily gone (interface down, mDNS off) falls back to that
+    /// same default *without* clearing `sel`, so it snaps back when the
     /// address returns.
     pub fn selected_index(&self, entries: &[UrlEntry]) -> usize {
         self.sel
             .as_ref()
             .and_then(|k| entries.iter().position(|e| &e.key == k))
-            .unwrap_or(0)
+            .unwrap_or_else(|| default_index(entries))
     }
 
     /// Cycling core, split out so it can be tested with synthetic entries
@@ -915,16 +926,16 @@ mod tests {
         let entries = entries_from(&all, true, "http", 8000, ""); // mDNS + 2 ifaces
         assert_eq!(entries.len(), 3);
         let mut app = test_app(None, false);
-        assert_eq!(app.selected_index(&entries), 0, "defaults to the ranked best");
+        assert_eq!(app.selected_index(&entries), 1, "defaults to the first IP entry");
 
-        app.cycle_in(&entries, 1);
-        assert_eq!(app.selected_index(&entries), 1);
         app.cycle_in(&entries, 1);
         assert_eq!(app.selected_index(&entries), 2);
         app.cycle_in(&entries, 1);
-        assert_eq!(app.selected_index(&entries), 0, "wraps forward");
+        assert_eq!(app.selected_index(&entries), 0);
+        app.cycle_in(&entries, 1);
+        assert_eq!(app.selected_index(&entries), 1, "wraps forward back to the default");
         app.cycle_in(&entries, -1);
-        assert_eq!(app.selected_index(&entries), 2, "wraps backward");
+        assert_eq!(app.selected_index(&entries), 0, "wraps backward");
 
         // switching logs a line, so the operator sees what changed
         assert!(app.log.iter().any(|l| l.contains("primary address:")));
@@ -933,6 +944,43 @@ mod tests {
         let before = app.sel.clone();
         app.cycle_in(&single, 1);
         assert_eq!(app.sel, before, "single entry: selection untouched");
+    }
+
+    #[test]
+    fn default_selection_is_first_ip_not_mdns() {
+        // mDNS announcing must not silently repoint the marker/QR at
+        // `.local` — the default stays on the first IP address.
+        let all = [iface("wlan0", "192.168.1.112"), iface("eth0", "172.23.246.136")];
+        let entries = entries_from(&all, true, "http", 8000, ""); // mDNS + 2 ifaces
+        assert_eq!(entries[0].key, SelKey::Mdns);
+
+        let mut app = test_app(None, false);
+        let idx = app.selected_index(&entries);
+        assert_eq!(idx, 1, "defaults to the first IP entry, not mDNS at index 0");
+        assert!(matches!(entries[idx].key, SelKey::Ip(_)));
+
+        // marker, QR and caption all read the same index: check the marker
+        let lines = App::lines_from(&entries, idx);
+        assert_eq!(lines.iter().filter(|l| l.starts_with('➜')).count(), 1);
+        assert!(lines[idx].starts_with('➜'));
+        assert!(!lines[0].starts_with('➜'), "mDNS line is not marked by default");
+
+        // Tab can still reach the mDNS entry
+        app.cycle_in(&entries, -1);
+        assert_eq!(app.selected_index(&entries), 0);
+        assert_eq!(entries[app.selected_index(&entries)].key, SelKey::Mdns);
+    }
+
+    #[test]
+    fn default_index_falls_back_to_zero_with_no_ip_entry() {
+        // no interfaces at all: entries_from's localhost fallback only
+        // fires when the list would otherwise be empty, so an mDNS-only
+        // list with zero IP entries is a real (if rare) case.
+        let e = entries_from(&[], true, "http", 8000, "");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].key, SelKey::Mdns);
+        let app = test_app(None, false);
+        assert_eq!(app.selected_index(&e), 0, "no IP entry: falls back to index 0, no panic");
     }
 
     #[test]
