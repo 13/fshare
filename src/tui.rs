@@ -28,6 +28,76 @@ enum Popup {
     Help,
 }
 
+/// Identity of a selectable address. Carries no scheme, port or base, so
+/// the secure/token/auth toggles never disturb a selection.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum SelKey {
+    Mdns,
+    Ip(IpAddr),
+}
+
+/// One shareable address: the full URL, the trailing "(…)" label and the
+/// identity used to keep a selection pinned across list rebuilds.
+#[derive(Debug)]
+pub struct UrlEntry {
+    pub url: String,
+    pub label: String,
+    pub key: SelKey,
+}
+
+/// Builds the shareable-address list: mDNS name first when announcing, then
+/// the interfaces that matter — loopback and virtual interfaces (docker
+/// bridges, veth pairs, VM nets) are hidden unless nothing else exists.
+/// Pure so ordering and selection can be tested with synthetic interfaces.
+/// Never returns an empty list.
+fn entries_from(
+    all: &[crate::net::Iface],
+    mdns_on: bool,
+    scheme: &str,
+    port: u16,
+    base: &str,
+) -> Vec<UrlEntry> {
+    let mut v = Vec::new();
+    if mdns_on {
+        v.push(UrlEntry {
+            url: format!("{scheme}://{}.local:{port}{base}/", crate::mdns::host_label()),
+            label: "mDNS".to_string(),
+            key: SelKey::Mdns,
+        });
+    }
+    let mut ifaces: Vec<&crate::net::Iface> = all
+        .iter()
+        .filter(|i| i.kind != crate::net::IfaceKind::Loopback && !is_virtual_iface(&i.name))
+        .collect();
+    if ifaces.is_empty() {
+        // nothing physical: fall back to whatever exists rather than none
+        ifaces = all.iter().filter(|i| i.kind != crate::net::IfaceKind::Loopback).collect();
+    }
+    for ifc in ifaces {
+        let host = match ifc.ip {
+            IpAddr::V6(v6) => format!("[{v6}]"),
+            IpAddr::V4(v4) => v4.to_string(),
+        };
+        let kind = match ifc.kind {
+            crate::net::IfaceKind::Lan => "LAN, ",
+            _ => "",
+        };
+        v.push(UrlEntry {
+            url: format!("{scheme}://{host}:{port}{base}/"),
+            label: format!("{kind}{}", ifc.name),
+            key: SelKey::Ip(ifc.ip),
+        });
+    }
+    if v.is_empty() {
+        v.push(UrlEntry {
+            url: format!("{scheme}://localhost:{port}{base}/"),
+            label: "local".to_string(),
+            key: SelKey::Ip(IpAddr::from([127, 0, 0, 1])),
+        });
+    }
+    v
+}
+
 pub enum Action {
     None,
     Quit,
@@ -104,61 +174,45 @@ impl App {
         if self.state.live.tls.load(Relaxed) { "https" } else { "http" }
     }
 
-    pub fn primary_url(&self) -> String {
-        let base = self.state.base();
-        let host = crate::net::ranked_ifaces()
-            .first()
-            .map(|i| match i.ip {
-                IpAddr::V6(v6) => format!("[{v6}]"),
-                IpAddr::V4(v4) => v4.to_string(),
-            })
-            .unwrap_or_else(|| "localhost".to_string());
-        format!("{}://{host}:{}{base}/", self.scheme(), self.port)
+    /// The live entry list: mDNS name first when announcing, then the
+    /// interfaces that matter. Rebuilt on demand so toggles show up at once.
+    pub fn url_entries(&self) -> Vec<UrlEntry> {
+        entries_from(
+            &crate::net::ranked_ifaces(),
+            self.state.live.mdns.load(Relaxed),
+            self.scheme(),
+            self.port,
+            &self.state.base(),
+        )
     }
 
-    /// One line per shareable URL: mDNS name first (when announcing), then
-    /// the interfaces that matter — loopback and virtual interfaces
-    /// (docker bridges, veth pairs, VM nets) are hidden unless nothing
-    /// else exists. Reads the live base so token toggles update the list.
+    pub fn primary_url(&self) -> String {
+        let entries = self.url_entries();
+        let sel = self.selected_index(&entries);
+        // entries_from never returns an empty list
+        entries[sel].url.clone()
+    }
+
+    /// One line per shareable URL, `➜` on the primary one.
     pub fn url_lines(&self) -> Vec<String> {
-        let base = self.state.base();
-        let mut v = Vec::new();
-        if self.state.live.mdns.load(Relaxed) {
-            v.push(format!(
-                "➜ {}://{}.local:{}{base}/    (mDNS)",
-                self.scheme(),
-                crate::mdns::host_label(),
-                self.port
-            ));
-        }
-        let all = crate::net::ranked_ifaces();
-        let mut ifaces: Vec<&crate::net::Iface> = all
+        let entries = self.url_entries();
+        let sel = self.selected_index(&entries);
+        Self::lines_from(&entries, sel)
+    }
+
+    pub(super) fn lines_from(entries: &[UrlEntry], sel: usize) -> Vec<String> {
+        entries
             .iter()
-            .filter(|i| i.kind != crate::net::IfaceKind::Loopback && !is_virtual_iface(&i.name))
-            .collect();
-        if ifaces.is_empty() {
-            // nothing physical: fall back to whatever exists rather than none
-            ifaces = all.iter().filter(|i| i.kind != crate::net::IfaceKind::Loopback).collect();
-        }
-        for (i, ifc) in ifaces.iter().enumerate() {
-            let host = match ifc.ip {
-                IpAddr::V6(v6) => format!("[{v6}]"),
-                IpAddr::V4(v4) => v4.to_string(),
-            };
-            let kind = match ifc.kind {
-                crate::net::IfaceKind::Lan => "LAN, ",
-                _ => "",
-            };
-            let marker = if i == 0 { "➜" } else { " " };
-            v.push(format!(
-                "{marker} {}://{host}:{}{base}/    ({kind}{})",
-                self.scheme(), self.port, ifc.name
-            ));
-        }
-        if v.is_empty() {
-            v.push(format!("➜ {}", self.primary_url()));
-        }
-        v
+            .enumerate()
+            .map(|(i, e)| {
+                let marker = if i == sel { "➜" } else { " " };
+                format!("{marker} {}    ({})", e.url, e.label)
+            })
+            .collect()
+    }
+
+    pub fn selected_index(&self, _entries: &[UrlEntry]) -> usize {
+        0
     }
 
     /// (key, label, on) triples for the hotkey bar, in display order.
@@ -443,6 +497,60 @@ mod tests {
 
     fn key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    fn iface(name: &str, ip: &str) -> crate::net::Iface {
+        let ip: IpAddr = ip.parse().unwrap();
+        crate::net::Iface { name: name.to_string(), ip, kind: crate::net::rank(ip) }
+    }
+
+    #[test]
+    fn entries_list_mdns_first_then_ranked_ifaces() {
+        let all = [
+            iface("wlan0", "192.168.1.112"),
+            iface("eth0", "172.23.246.136"),
+            iface("docker0", "172.17.0.1"),
+            iface("lo", "127.0.0.1"),
+        ];
+        let e = entries_from(&all, true, "http", 8000, "");
+        assert_eq!(e.len(), 3, "docker0 and lo are hidden: {e:?}");
+        assert_eq!(e[0].key, SelKey::Mdns);
+        assert_eq!(e[0].label, "mDNS");
+        assert!(e[0].url.contains(".local:8000/"));
+        assert_eq!(e[1].key, SelKey::Ip("192.168.1.112".parse().unwrap()));
+        assert_eq!(e[1].url, "http://192.168.1.112:8000/");
+        assert_eq!(e[1].label, "LAN, wlan0");
+        assert_eq!(e[2].label, "LAN, eth0");
+
+        // scheme and base flow through; mDNS off drops the first entry
+        let e = entries_from(&all, false, "https", 9000, "/s/tok");
+        assert_eq!(e[0].url, "https://192.168.1.112:9000/s/tok/");
+        assert!(e.iter().all(|x| x.key != SelKey::Mdns));
+
+        // nothing physical: fall back to whatever is left rather than nothing
+        let only_virtual = [iface("docker0", "172.17.0.1")];
+        let e = entries_from(&only_virtual, false, "http", 8000, "");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].label, "LAN, docker0");
+
+        // nothing at all: a localhost entry, never an empty list
+        let e = entries_from(&[], false, "http", 8000, "");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].url, "http://localhost:8000/");
+    }
+
+    #[test]
+    fn marker_marks_only_the_selected_line() {
+        let all = [iface("wlan0", "192.168.1.112"), iface("eth0", "172.23.246.136")];
+        let entries = entries_from(&all, true, "http", 8000, "");
+        let lines = App::lines_from(&entries, 2);
+        assert_eq!(
+            lines.iter().filter(|l| l.starts_with('➜')).count(),
+            1,
+            "exactly one primary marker: {lines:?}"
+        );
+        assert_eq!(lines[2], "➜ http://172.23.246.136:8000/    (LAN, eth0)");
+        assert!(lines[0].starts_with("  http"), "unselected lines are indented");
     }
 
     #[test]
