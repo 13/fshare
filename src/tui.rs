@@ -266,8 +266,20 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
-        // popups cover the screen: the closing key is swallowed
+        // popups cover the screen: the closing key is swallowed. Tab is the
+        // exception — it cycles the address so the QR redraws in place.
         if self.popup != Popup::None {
+            match key.code {
+                KeyCode::Tab => {
+                    self.cycle(1);
+                    return Action::None;
+                }
+                KeyCode::BackTab => {
+                    self.cycle(-1);
+                    return Action::None;
+                }
+                _ => {}
+            }
             self.popup = Popup::None;
             self.notice = None;
             return Action::None;
@@ -305,6 +317,8 @@ impl App {
             }
             KeyCode::Char('Q') => self.popup = Popup::Qr,
             KeyCode::Char('?') => self.popup = Popup::Help,
+            KeyCode::Tab => self.cycle(1),
+            KeyCode::BackTab => self.cycle(-1),
             KeyCode::Up => self.scroll_by(1),
             KeyCode::Down => self.scroll_by(-1),
             KeyCode::PageUp => self.scroll_by(10),
@@ -525,6 +539,14 @@ mod tests {
 
     fn key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    fn tab() -> KeyEvent {
+        KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)
+    }
+
+    fn back_tab() -> KeyEvent {
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)
     }
 
     fn iface(name: &str, ip: &str) -> crate::net::Iface {
@@ -929,5 +951,34 @@ mod tests {
 
         // …and come back to it when the interface returns
         assert_eq!(app.selected_index(&plain), 1, "choice is not forgotten");
+    }
+
+    #[test]
+    fn tab_switches_primary_address() {
+        let mut app = test_app(None, false);
+        if app.url_entries().len() < 2 {
+            return; // single-homed machine: nothing to cycle to
+        }
+        let before = app.primary_url();
+        app.handle_key(tab());
+        let after = app.primary_url();
+        assert_ne!(after, before, "Tab moves to the next address");
+        assert!(app.log.iter().any(|l| l.contains("primary address:")));
+        app.handle_key(back_tab());
+        assert_eq!(app.primary_url(), before, "Shift+Tab moves back");
+    }
+
+    #[test]
+    fn tab_cycles_inside_the_qr_popup_without_closing_it() {
+        let mut app = test_app(None, false);
+        app.handle_key(key('Q'));
+        assert!(app.popup == Popup::Qr);
+        app.handle_key(tab());
+        assert!(app.popup == Popup::Qr, "Tab keeps the QR popup open");
+        app.handle_key(back_tab());
+        assert!(app.popup == Popup::Qr, "Shift+Tab keeps the QR popup open");
+        // any other key still closes it
+        app.handle_key(key('u'));
+        assert!(app.popup == Popup::None);
     }
 }

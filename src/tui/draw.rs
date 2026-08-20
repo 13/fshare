@@ -125,7 +125,7 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
         ));
     }
     spans.push(Span::styled(
-        "  [Q]r [?]help [q]uit",
+        "  [Q]r [?]help [Tab]addr [q]uit",
         Style::default().fg(Color::DarkGray),
     ));
     f.render_widget(Paragraph::new(Line::from(spans)), bar);
@@ -199,9 +199,10 @@ fn draw_help_popup(f: &mut Frame) {
  h  toggle hidden files
  z  toggle zip downloads
  Q  QR code popup
+ Tab / ⇧Tab  switch primary address
  ↑↓ PgUp PgDn  scroll log
  q / x / Ctrl+C  quit";
-    let r = centered(f.area(), 46, 12);
+    let r = centered(f.area(), 48, 14);
     f.render_widget(Clear, r);
     f.render_widget(
         Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(" keys ")),
