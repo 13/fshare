@@ -267,18 +267,21 @@ impl App {
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
         // popups cover the screen: the closing key is swallowed. Tab is the
-        // exception — it cycles the address so the QR redraws in place.
+        // exception in the QR popup — it cycles the address so the QR
+        // redraws in place.
         if self.popup != Popup::None {
-            match key.code {
-                KeyCode::Tab => {
-                    self.cycle(1);
-                    return Action::None;
+            if self.popup == Popup::Qr {
+                match key.code {
+                    KeyCode::Tab => {
+                        self.cycle(1);
+                        return Action::None;
+                    }
+                    KeyCode::BackTab => {
+                        self.cycle(-1);
+                        return Action::None;
+                    }
+                    _ => {}
                 }
-                KeyCode::BackTab => {
-                    self.cycle(-1);
-                    return Action::None;
-                }
-                _ => {}
             }
             self.popup = Popup::None;
             self.notice = None;
@@ -980,5 +983,17 @@ mod tests {
         // any other key still closes it
         app.handle_key(key('u'));
         assert!(app.popup == Popup::None);
+    }
+
+    #[test]
+    fn tab_closes_the_help_popup_like_any_other_key() {
+        let mut app = test_app(None, false);
+        app.handle_key(key('?'));
+        assert!(app.popup == Popup::Help);
+        app.handle_key(tab());
+        assert!(app.popup == Popup::None, "Tab closes Help rather than cycling behind it");
+        app.handle_key(key('?'));
+        app.handle_key(back_tab());
+        assert!(app.popup == Popup::None, "Shift+Tab closes Help too");
     }
 }
