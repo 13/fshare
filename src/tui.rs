@@ -996,4 +996,18 @@ mod tests {
         app.handle_key(back_tab());
         assert!(app.popup == Popup::None, "Shift+Tab closes Help too");
     }
+
+    #[test]
+    fn qr_popup_title_follows_selection() {
+        let mut app = test_app(None, false);
+        app.handle_key(key('Q'));
+        app.handle_key(tab()); // no-op on a single-homed box, still valid
+        let url = app.primary_url();
+        let backend = TestBackend::new(160, 60);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains(&url), "popup title shows the selected URL: {url}");
+    }
 }

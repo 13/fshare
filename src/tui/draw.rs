@@ -11,7 +11,10 @@ use std::sync::atomic::Ordering::Relaxed;
 
 pub(super) fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
-    let urls = app.url_lines();
+    let entries = app.url_entries();
+    let sel = app.selected_index(&entries);
+    let primary = entries[sel].url.clone(); // entries_from never returns empty
+    let urls = App::lines_from(&entries, sel);
     let header_h = urls.len() as u16 + 1 + app.notice.is_some() as u16 + 2;
     // header and hotkey bar span the full width (URLs are long); the QR
     // panel takes a right column of the log region only, bottom-aligned
@@ -25,7 +28,7 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
 
     let mut logs = body;
     if app.show_qr {
-        if let Some(q) = qr_text(&app.primary_url()) {
+        if let Some(q) = qr_text(&primary) {
             let (qw, qh) = qr_size(&q);
             if body.width >= qw + 44 && body.height >= qh {
                 let [left, right] =
@@ -34,7 +37,7 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
                 // QR content sits at the top; the block border spans the
                 // whole column so it lines up with the log pane's bottom
                 let mut text = ratatui::text::Text::raw(q);
-                let url = app.primary_url();
+                let url = primary.clone();
                 let inner_w = (qw - 6) as usize; // borders + padding
                 let url_rows = 1 + url.len().div_ceil(inner_w) as u16;
                 if left.height >= qh + url_rows {
@@ -131,7 +134,7 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(Line::from(spans)), bar);
 
     match app.popup {
-        Popup::Qr => draw_qr_popup(f, app),
+        Popup::Qr => draw_qr_popup(f, &primary),
         Popup::Help => draw_help_popup(f),
         Popup::None => {}
     }
@@ -167,9 +170,8 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
     Rect::new(x, y, w.min(area.width), h.min(area.height))
 }
 
-fn draw_qr_popup(f: &mut Frame, app: &App) {
-    let url = app.primary_url();
-    let Some(rendered) = qr_text(&url) else {
+fn draw_qr_popup(f: &mut Frame, url: &str) {
+    let Some(rendered) = qr_text(url) else {
         return;
     };
     let (w, h) = qr_size(&rendered);
