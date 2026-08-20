@@ -1,7 +1,7 @@
 # Maintainer: Ben Egger <eggerben@gmail.com>
 _ghowner=13
 pkgname=fshare
-pkgver=0.1.11
+pkgver=0.1.12
 pkgrel=1
 pkgdesc="Modern LAN file sharing over HTTP — a better python3 -m http.server"
 arch=(x86_64 aarch64)
@@ -10,7 +10,7 @@ license=(MIT)
 depends=(gcc-libs)
 makedepends=(cargo)
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('b73cc1edc1572355191e74b4eb539b6c0cd3e32ada6aed3b5d8ff9598c65c281')
+sha256sums=('8afe95ce5657c10dcc9b888a6868f657611929d8a0e48598d592dad3d86bc83a')
 
 prepare() {
   cd "$pkgname-$pkgver"
