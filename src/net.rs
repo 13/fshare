@@ -11,6 +11,13 @@ pub enum IfaceKind {
     Loopback,
 }
 
+/// Home-router range (192.168.0.0/16): the subnet a phone scanning the QR
+/// code is almost always on, so it outranks other private ranges (corporate
+/// 172.16/12, VPN/container 10/8) when picking the primary URL.
+pub fn is_home_lan(ip: IpAddr) -> bool {
+    matches!(ip, IpAddr::V4(v4) if v4.octets()[0] == 192 && v4.octets()[1] == 168)
+}
+
 pub fn rank(ip: IpAddr) -> IfaceKind {
     match ip {
         IpAddr::V4(v4) if v4.is_loopback() => IfaceKind::Loopback,
@@ -37,7 +44,7 @@ pub fn ranked_ifaces() -> Vec<Iface> {
         })
         .map(|i| Iface { kind: rank(i.ip()), ip: i.ip(), name: i.name })
         .collect();
-    v.sort_by(|a, b| a.kind.cmp(&b.kind).then(a.ip.is_ipv6().cmp(&b.ip.is_ipv6())));
+    v.sort_by_key(|i| (i.kind, !is_home_lan(i.ip), i.ip.is_ipv6()));
     v
 }
 
@@ -79,6 +86,29 @@ mod tests {
         assert_eq!(rank(ip("127.0.0.1")), IfaceKind::Loopback);
         assert_eq!(rank(ip("::1")), IfaceKind::Loopback);
         assert!(IfaceKind::Lan < IfaceKind::Other && IfaceKind::Other < IfaceKind::Loopback);
+    }
+
+    #[test]
+    fn home_lan_sorts_ahead_of_other_private_ranges() {
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        assert!(is_home_lan(ip("192.168.1.112")));
+        assert!(!is_home_lan(ip("172.23.246.136")));
+        assert!(!is_home_lan(ip("10.200.200.9")));
+        assert!(!is_home_lan(ip("192.169.1.1")));
+
+        let mk = |name: &str, s: &str| {
+            let ip = ip(s);
+            Iface { name: name.to_string(), ip, kind: rank(ip) }
+        };
+        let mut v = [
+            mk("enp128s31f6", "172.23.246.136"),
+            mk("wlan0", "192.168.1.112"),
+            mk("wg0", "10.200.200.9"),
+            mk("lo", "127.0.0.1"),
+        ];
+        v.sort_by_key(|i| (i.kind, !is_home_lan(i.ip), i.ip.is_ipv6()));
+        assert_eq!(v[0].name, "wlan0");
+        assert_eq!(v.last().unwrap().name, "lo");
     }
 
     #[test]
