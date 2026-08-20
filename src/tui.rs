@@ -1010,4 +1010,44 @@ mod tests {
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(text.contains(&url), "popup title shows the selected URL: {url}");
     }
+
+    /// Renders the header and reads back the line carrying the `➜` marker.
+    fn marked_header_line(app: &App) -> String {
+        let backend = TestBackend::new(160, 60);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let (w, h) = (160usize, 60usize);
+        (0..h)
+            .map(|y| (0..w).map(|x| buf.content()[y * w + x].symbol()).collect::<String>())
+            .find(|row| row.contains('➜'))
+            .expect("a header line carries the primary marker")
+    }
+
+    #[test]
+    fn rendered_marker_follows_the_selection() {
+        let mut app = test_app(None, false);
+        let before = marked_header_line(&app);
+        assert!(
+            before.contains(&app.primary_url()),
+            "marked line is the primary URL: {before}"
+        );
+
+        app.handle_key(tab());
+        let after = marked_header_line(&app);
+        assert!(
+            after.contains(&app.primary_url()),
+            "marker still on the primary URL after Tab: {after}"
+        );
+
+        // on a multi-homed host Tab must actually move the marker; on a
+        // single-homed one there is nowhere to move and it must not
+        if app.url_entries().len() > 1 {
+            assert_ne!(before, after, "Tab moves the marker to another address");
+            app.handle_key(back_tab());
+            assert_eq!(marked_header_line(&app), before, "Shift+Tab moves it back");
+        } else {
+            assert_eq!(before, after, "single address: the marker stays put");
+        }
+    }
 }
