@@ -98,7 +98,7 @@ selection snaps back when that address returns.
 ### Keys and rendering
 
 - `handle_key`: `KeyCode::Tab` → `cycle(1)`, `KeyCode::BackTab` → `cycle(-1)`.
-- One deliberate exception to the popup rule (`tui.rs:186`, where any key
+- One deliberate exception to the popup rule (`tui.rs:187`, where any key
   closes the popup): Tab and BackTab do not close the QR popup, they cycle
   inside it, and the QR redraws in place for the new address. Every other
   key still closes it.
