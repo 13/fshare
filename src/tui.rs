@@ -936,6 +936,40 @@ mod tests {
     }
 
     #[test]
+    fn cycle_from_a_stale_selection_starts_at_the_ranked_best() {
+        let all = [
+            iface("wlan0", "192.168.1.112"),
+            iface("eth0", "172.23.246.136"),
+            iface("wg0", "10.200.200.9"),
+        ];
+        let full = entries_from(&all, false, "http", 8000, "");
+        let gone = entries_from(
+            &[iface("wlan0", "192.168.1.112"), iface("wg0", "10.200.200.9")],
+            false,
+            "http",
+            8000,
+            "",
+        );
+
+        let mut app = test_app(None, false);
+        app.cycle_in(&full, 1); // select eth0
+        assert_eq!(app.selected_index(&full), 1);
+
+        // eth0 drops, but two addresses remain: cycling is still possible and
+        // must resume from the ranked best, not from a stale index
+        assert_eq!(app.selected_index(&gone), 0);
+        app.cycle_in(&gone, 1);
+        assert_eq!(app.selected_index(&gone), 1);
+        assert_eq!(app.sel, Some(gone[1].key.clone()));
+
+        // backward from a stale selection wraps to the last entry
+        let mut back = test_app(None, false);
+        back.cycle_in(&full, 1); // eth0 again
+        back.cycle_in(&gone, -1);
+        assert_eq!(back.selected_index(&gone), 1, "wraps to the end, no underflow");
+    }
+
+    #[test]
     fn selection_survives_scheme_base_and_iface_churn() {
         let all = [iface("wlan0", "192.168.1.112"), iface("eth0", "172.23.246.136")];
         let mut app = test_app(None, false);
