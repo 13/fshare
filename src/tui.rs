@@ -48,8 +48,9 @@ pub struct UrlEntry {
 /// Builds the shareable-address list: mDNS name first when announcing, then
 /// the interfaces that matter — loopback and virtual interfaces (docker
 /// bridges, veth pairs, VM nets) are hidden unless nothing else exists.
-/// Pure so ordering and selection can be tested with synthetic interfaces.
-/// Never returns an empty list.
+/// Entries that render an identical URL (e.g. two interfaces sharing an IP)
+/// are deduped, keeping the first. Pure so ordering and selection can be
+/// tested with synthetic interfaces. Never returns an empty list.
 fn entries_from(
     all: &[crate::net::Iface],
     mdns_on: bool,
@@ -95,6 +96,12 @@ fn entries_from(
             key: SelKey::Ip(IpAddr::from([127, 0, 0, 1])),
         });
     }
+    // interfaces that render an identical URL (macvlan/ipvlan, or plain
+    // misconfiguration) add nothing but a second SelKey mapping to the same
+    // spot — position()-based selection would resolve back to the first
+    // one and jam forward Tab. Keep the first, drop the rest.
+    let mut seen = std::collections::HashSet::new();
+    v.retain(|e| seen.insert(e.url.clone()));
     v
 }
 
@@ -601,6 +608,34 @@ mod tests {
         let e = entries_from(&[], false, "http", 8000, "");
         assert_eq!(e.len(), 1);
         assert_eq!(e[0].url, "http://localhost:8000/");
+    }
+
+    #[test]
+    fn duplicate_urls_are_deduped_keeping_the_first_label() {
+        // two interfaces sharing an IP (macvlan/ipvlan, misconfiguration)
+        // render an identical URL — keep only the first.
+        let all = [iface("eth0", "192.168.1.50"), iface("eth0:1", "192.168.1.50")];
+        let e = entries_from(&all, false, "http", 8000, "");
+        assert_eq!(e.len(), 1, "duplicate URL collapses to one entry: {e:?}");
+        assert_eq!(e[0].label, "LAN, eth0", "the first entry's label wins");
+    }
+
+    #[test]
+    fn cycling_reaches_every_distinct_url_past_a_duplicate() {
+        let all = [
+            iface("eth0", "192.168.1.50"),
+            iface("eth0:1", "192.168.1.50"), // duplicate IP, different name
+            iface("wlan0", "192.168.1.60"),
+        ];
+        let entries = entries_from(&all, false, "http", 8000, "");
+        assert_eq!(entries.len(), 2, "the duplicate is dropped: {entries:?}");
+
+        let mut app = test_app(None, false);
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(entries[app.selected_index(&entries)].url.clone());
+        app.cycle_in(&entries, 1);
+        visited.insert(entries[app.selected_index(&entries)].url.clone());
+        assert_eq!(visited.len(), 2, "Tab reaches every distinct URL: {visited:?}");
     }
 
     #[test]
