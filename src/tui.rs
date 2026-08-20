@@ -31,7 +31,7 @@ enum Popup {
 /// Identity of a selectable address. Carries no scheme, port or base, so
 /// the secure/token/auth toggles never disturb a selection.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum SelKey {
+pub(crate) enum SelKey {
     Mdns,
     Ip(IpAddr),
 }
@@ -39,7 +39,7 @@ pub enum SelKey {
 /// One shareable address: the full URL, the trailing "(…)" label and the
 /// identity used to keep a selection pinned across list rebuilds.
 #[derive(Debug)]
-pub struct UrlEntry {
+pub(crate) struct UrlEntry {
     pub url: String,
     pub label: String,
     pub key: SelKey,
@@ -194,7 +194,7 @@ impl App {
 
     /// The live entry list: mDNS name first when announcing, then the
     /// interfaces that matter. Rebuilt on demand so toggles show up at once.
-    pub fn url_entries(&self) -> Vec<UrlEntry> {
+    pub(crate) fn url_entries(&self) -> Vec<UrlEntry> {
         entries_from(
             &crate::net::ranked_ifaces(),
             self.state.live.mdns.load(Relaxed),
@@ -236,7 +236,7 @@ impl App {
     /// is momentarily gone (interface down, mDNS off) falls back to that
     /// same default *without* clearing `sel`, so it snaps back when the
     /// address returns.
-    pub fn selected_index(&self, entries: &[UrlEntry]) -> usize {
+    pub(crate) fn selected_index(&self, entries: &[UrlEntry]) -> usize {
         self.sel
             .as_ref()
             .and_then(|k| entries.iter().position(|e| &e.key == k))
@@ -291,10 +291,12 @@ impl App {
             if self.popup == Popup::Qr {
                 match key.code {
                     KeyCode::Tab => {
+                        self.notice = None;
                         self.cycle(1);
                         return Action::None;
                     }
                     KeyCode::BackTab => {
+                        self.notice = None;
                         self.cycle(-1);
                         return Action::None;
                     }
@@ -1100,6 +1102,27 @@ mod tests {
         // any other key still closes it
         app.handle_key(key('u'));
         assert!(app.popup == Popup::None);
+    }
+
+    #[test]
+    fn tab_in_qr_popup_clears_the_notice() {
+        // opening the popup itself already clears any prior notice (every
+        // other key path does), so set one directly on the open popup to
+        // exercise the Tab/BackTab carve-out specifically — the one path
+        // that used to skip the clear.
+        let mut app = test_app(None, false);
+        app.handle_key(key('Q'));
+        assert!(app.popup == Popup::Qr);
+
+        app.notice = Some("auth on — user: fshare  password: xxxx".to_string());
+        app.handle_key(tab());
+        assert!(app.popup == Popup::Qr, "Tab keeps the popup open");
+        assert!(app.notice.is_none(), "Tab in the QR popup clears the notice");
+
+        app.notice = Some("another notice".to_string());
+        app.handle_key(back_tab());
+        assert!(app.popup == Popup::Qr, "Shift+Tab keeps the popup open");
+        assert!(app.notice.is_none(), "Shift+Tab in the QR popup clears the notice");
     }
 
     #[test]

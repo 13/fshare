@@ -124,6 +124,7 @@ flip live — no restart:
 | `h` | toggle hidden files |
 | `z` | toggle zip downloads |
 | `Q` | QR code popup |
+| Tab / Shift+Tab | switch primary address |
 | `?` | help |
 | `q` / `x` / Ctrl+C | quit |
 
