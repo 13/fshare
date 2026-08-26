@@ -30,10 +30,8 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
     if app.show_qr {
         if let Some(q) = qr_text(&primary) {
             let (qw, qh) = qr_size(&q);
-            // the column is wide enough for the URL on a single row: a
-            // wrapped URL breaks terminal link detection mid-port
             let url = primary.clone();
-            let cw = qw.max(url.len() as u16 + 6); // borders + padding
+            let cw = qr_col_width(qw, url.chars().count());
             if body.width >= cw + 44 && body.height >= qh {
                 let [left, right] =
                     Layout::horizontal([Constraint::Length(cw), Constraint::Min(0)]).areas(body);
@@ -157,6 +155,14 @@ fn qr_block() -> Block<'static> {
         .title(" QR ")
 }
 
+/// Width of the QR side column: wide enough for the QR itself *and* for the
+/// URL on a single row. A URL that wraps breaks terminal link detection at the
+/// row break — clicking `http://192.168.23.239:8000/` split after `:800` opens
+/// the truncated `http://192.168.23.239:800` — so the column grows instead.
+fn qr_col_width(qr_w: u16, url_chars: usize) -> u16 {
+    qr_w.max(url_chars as u16 + 6) // borders (2) + padding (4)
+}
+
 /// Outer size of the QR panel including borders and padding.
 fn qr_size(rendered: &str) -> (u16, u16) {
     let lines: Vec<&str> = rendered.lines().collect();
@@ -211,4 +217,28 @@ fn draw_help_popup(f: &mut Frame) {
         Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(" keys ")),
         r,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The panel used to be sized to the QR alone, so a URL longer than the
+    /// QR wrapped and terminal link detection stopped at the row break.
+    #[test]
+    fn qr_column_fits_a_url_longer_than_the_qr() {
+        // 27 chars: the case from the bug report, against a 25-col QR
+        let url = "http://192.168.23.239:8000/";
+        let w = qr_col_width(25, url.chars().count());
+        assert!(
+            w as usize >= url.chars().count() + 6,
+            "column {w} must hold the {}-char URL plus borders and padding",
+            url.chars().count(),
+        );
+    }
+
+    #[test]
+    fn qr_column_never_shrinks_below_the_qr() {
+        assert_eq!(qr_col_width(40, "http://a:1/".chars().count()), 40);
+    }
 }

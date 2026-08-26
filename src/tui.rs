@@ -883,24 +883,28 @@ mod tests {
         assert!(text.contains("42 files"), "summary appears once counted");
     }
 
+    /// Host-independent: whatever the machine's real primary address is, it
+    /// must render intact under the QR — a URL split across rows breaks
+    /// terminal link detection. The width rule itself is unit-tested in
+    /// `draw::tests`, which can pin a URL longer than the QR.
     #[test]
     fn qr_side_panel_url_is_never_wrapped() {
-        // a 27-char URL used to wrap inside the 25-col QR panel, splitting
-        // the port ("…:800" / "0/") so terminal link detection opened a
-        // truncated address
         let mut app = test_app(None, false);
         app.show_qr = true;
         let url = app.primary_url();
-        assert!(url.len() > 25, "test URL must exceed the bare QR width: {url}");
-        let backend = TestBackend::new(120, 40);
+        let backend = TestBackend::new(160, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &app)).unwrap();
         let buf = terminal.backend().buffer().clone();
         let rows: Vec<String> = (0..40)
-            .map(|y| (0..120).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .map(|y| (0..160).map(|x| buf[(x, y)].symbol().to_string()).collect())
             .collect();
         let hits = rows.iter().filter(|r| r.contains(&url)).count();
-        assert!(hits >= 2, "URL must appear whole in the header and under the QR:\n{}", rows.join("\n"));
+        assert!(
+            hits >= 2,
+            "{url} must appear whole in the header and under the QR:\n{}",
+            rows.join("\n"),
+        );
     }
 
     #[test]
