@@ -11,7 +11,7 @@ license=(MIT)
 provides=(fshare)
 conflicts=(fshare)
 source=("$url/releases/download/v$pkgver/fshare-v$pkgver-x86_64-unknown-linux-musl.tar.gz")
-sha256sums=('f94bebb1db7b4539436ca5b950a82d6df986a85a0f9fb02689701767e43a0047')
+sha256sums=('325e068ce4b6674e8760dea63566b9748898e890091a4df2887119d9415fe486')
 
 package() {
   install -Dm755 fshare "$pkgdir/usr/bin/fshare"
