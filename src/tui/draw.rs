@@ -30,24 +30,25 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
     if app.show_qr {
         if let Some(q) = qr_text(&primary) {
             let (qw, qh) = qr_size(&q);
-            if body.width >= qw + 44 && body.height >= qh {
+            // the column is wide enough for the URL on a single row: a
+            // wrapped URL breaks terminal link detection mid-port
+            let url = primary.clone();
+            let cw = qw.max(url.len() as u16 + 6); // borders + padding
+            if body.width >= cw + 44 && body.height >= qh {
                 let [left, right] =
-                    Layout::horizontal([Constraint::Length(qw), Constraint::Min(0)]).areas(body);
+                    Layout::horizontal([Constraint::Length(cw), Constraint::Min(0)]).areas(body);
                 logs = right;
                 // QR content sits at the top; the block border spans the
                 // whole column so it lines up with the log pane's bottom
                 let mut text = ratatui::text::Text::raw(q);
-                let url = primary.clone();
-                let inner_w = (qw - 6) as usize; // borders + padding
-                let url_rows = 1 + url.len().div_ceil(inner_w) as u16;
-                if left.height >= qh + url_rows {
+                if left.height >= qh + 2 {
                     // the URL the QR encodes, for humans
                     text.push_line(Line::raw(""));
                     text.push_line(Line::styled(url, Style::default().fg(Color::Cyan)));
                 }
                 f.render_widget(
                     Paragraph::new(text)
-                        .wrap(ratatui::widgets::Wrap { trim: false })
+                        .alignment(ratatui::layout::Alignment::Center)
                         .block(qr_block()),
                     left,
                 );

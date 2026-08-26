@@ -884,6 +884,26 @@ mod tests {
     }
 
     #[test]
+    fn qr_side_panel_url_is_never_wrapped() {
+        // a 27-char URL used to wrap inside the 25-col QR panel, splitting
+        // the port ("…:800" / "0/") so terminal link detection opened a
+        // truncated address
+        let mut app = test_app(None, false);
+        app.show_qr = true;
+        let url = app.primary_url();
+        assert!(url.len() > 25, "test URL must exceed the bare QR width: {url}");
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let rows: Vec<String> = (0..40)
+            .map(|y| (0..120).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect();
+        let hits = rows.iter().filter(|r| r.contains(&url)).count();
+        assert!(hits >= 2, "URL must appear whole in the header and under the QR:\n{}", rows.join("\n"));
+    }
+
+    #[test]
     fn qr_side_panel_renders_when_wide() {
         let mut app = test_app(None, false);
         app.show_qr = true;
