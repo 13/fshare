@@ -915,7 +915,10 @@ mod tests {
         let mut app = test_app(None, false);
         app.show_qr = true;
         let url = app.primary_url();
-        let backend = TestBackend::new(120, 40);
+        // roomy on purpose: the counts below assume every address is rendered
+        // in full and the QR panel fits, neither of which is guaranteed at a
+        // size that depends on the host's own addresses
+        let backend = TestBackend::new(200, 60);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &app)).unwrap();
         let buf = terminal.backend().buffer().clone();
@@ -946,7 +949,7 @@ mod tests {
         // the address rows sit inside the header border, from row 1 down
         let rows = 1..=app.url_entries().len() as u16;
         let header_links = |buf: &ratatui::buffer::Buffer, rows: std::ops::RangeInclusive<u16>| {
-            rows.flat_map(|y| (0..120).map(move |x| (x, y)))
+            rows.flat_map(|y| (0..120u16).map(move |x| (x, y)))
                 .filter(|&(x, y)| buf[(x, y)].symbol().contains("\x1b]8;;"))
                 .count()
         };
@@ -993,18 +996,20 @@ mod tests {
     fn qr_popup_title_spells_out_the_whole_url() {
         let mut app = test_app(None, false);
         app.handle_key(key('Q'));
-        let backend = TestBackend::new(120, 40);
+        // big enough that the popup never falls back to "terminal too small",
+        // whatever the host's primary address encodes to
+        let (w, h) = (200u16, 60u16);
+        let backend = TestBackend::new(w, h);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &app)).unwrap();
         let buf = terminal.backend().buffer().clone();
         let url = app.primary_url();
 
-        let title = (0..40)
-            .map(|y| visible_row(&buf, y, 120))
+        let rows: Vec<String> = (0..h).map(|y| visible_row(&buf, y, w)).collect();
+        let title = rows
+            .iter()
             .find(|r| r.contains('┌') && r.contains(&url))
-            .unwrap_or_else(|| {
-                panic!("no popup row shows {url} in full:\n{}", (0..40).map(|y| visible_row(&buf, y, 120)).collect::<Vec<_>>().join("\n"))
-            });
+            .unwrap_or_else(|| panic!("no popup row shows {url} in full:\n{}", rows.join("\n")));
         assert!(!title.contains(" QR "), "the URL is the popup's only title: {title}");
     }
 
