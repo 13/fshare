@@ -907,6 +907,107 @@ mod tests {
         );
     }
 
+    /// Terminals guess where a URL ends by scanning visible text, which stops
+    /// at a row break or a clip. An OSC 8 sequence carries the target itself,
+    /// so the click resolves to the whole address either way.
+    #[test]
+    fn urls_are_marked_as_osc8_hyperlinks() {
+        let mut app = test_app(None, false);
+        app.show_qr = true;
+        let url = app.primary_url();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+
+        let opener = format!("\x1b]8;;{url}\x1b\\");
+        let primary = buf.content().iter().filter(|c| c.symbol().starts_with(&opener)).count();
+        assert!(primary >= 2, "the header row and the QR panel both link {url}");
+
+        // every address in the header is linked, so count all runs, not just
+        // the primary one
+        let close = "\x1b]8;;\x1b\\";
+        let opens =
+            buf.content().iter().filter(|c| c.symbol().starts_with("\x1b]8;;") && c.symbol() != close).count();
+        let closes = buf.content().iter().filter(|c| c.symbol().ends_with(close)).count();
+        assert_eq!(opens, closes, "every link opened is closed");
+        assert_eq!(opens, app.url_entries().len() + 1, "one run per address, plus the QR panel");
+    }
+
+    /// A popup covers a link run only partially, and the diff redraws just the
+    /// covered cells — which would strip the opening sequence from the tail.
+    #[test]
+    fn links_are_dropped_while_a_popup_is_open() {
+        let mut app = test_app(None, false);
+        app.show_qr = true;
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // the address rows sit inside the header border, from row 1 down
+        let rows = 1..=app.url_entries().len() as u16;
+        let header_links = |buf: &ratatui::buffer::Buffer, rows: std::ops::RangeInclusive<u16>| {
+            rows.flat_map(|y| (0..120).map(move |x| (x, y)))
+                .filter(|&(x, y)| buf[(x, y)].symbol().contains("\x1b]8;;"))
+                .count()
+        };
+
+        app.handle_key(key('Q'));
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        assert_eq!(
+            header_links(&buf, rows.clone()),
+            0,
+            "runs the popup partly covers lose their link while it is up",
+        );
+
+        // and they come back once it closes
+        app.handle_key(key('Q'));
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        assert!(header_links(&buf, rows) > 0, "links are restored after the popup closes");
+    }
+
+    /// Cell symbols for one row with any OSC 8 sequences stripped back out —
+    /// what the terminal actually shows.
+    fn visible_row(buf: &ratatui::buffer::Buffer, y: u16, w: u16) -> String {
+        let mut out = String::new();
+        for x in 0..w {
+            let sym = buf[(x, y)].symbol().to_string();
+            let mut rest = sym.as_str();
+            while let Some(i) = rest.find("\x1b]8;;") {
+                out.push_str(&rest[..i]);
+                match rest[i..].find("\x1b\\") {
+                    Some(j) => rest = &rest[i + j + 2..],
+                    None => break,
+                }
+            }
+            out.push_str(rest);
+        }
+        out
+    }
+
+    /// `Block::title` appends, and the QR frame used to carry a built-in
+    /// `" QR "`, so the popup rendered `┌ QR ─ http://192.168.23.239:8┐` — the
+    /// address cut off on screen, and too truncated to be linked.
+    #[test]
+    fn qr_popup_title_spells_out_the_whole_url() {
+        let mut app = test_app(None, false);
+        app.handle_key(key('Q'));
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let url = app.primary_url();
+
+        let title = (0..40)
+            .map(|y| visible_row(&buf, y, 120))
+            .find(|r| r.contains('┌') && r.contains(&url))
+            .unwrap_or_else(|| {
+                panic!("no popup row shows {url} in full:\n{}", (0..40).map(|y| visible_row(&buf, y, 120)).collect::<Vec<_>>().join("\n"))
+            });
+        assert!(!title.contains(" QR "), "the URL is the popup's only title: {title}");
+    }
+
     #[test]
     fn qr_side_panel_renders_when_wide() {
         let mut app = test_app(None, false);
