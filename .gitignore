@@ -9,3 +9,7 @@ packaging/aur/**/src/
 
 # superpowers SDD scratch
 .superpowers/
+
+*.pkg.tar.zst
+/packaging/arch/src/
+/packaging/arch/pkg/

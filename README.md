@@ -31,6 +31,12 @@ One-liner (latest release binary into `~/.local/bin`, x86_64 or aarch64):
 mkdir -p ~/.local/bin && curl -sL $(curl -s https://api.github.com/repos/13/fshare/releases/latest | grep -o "https://[^\"]*$(uname -m)-unknown-linux-musl\.tar\.gz") | tar xz -C ~/.local/bin fshare
 ```
 
+Arch Linux (package attached to each release):
+
+```bash
+sudo pacman -U https://github.com/13/fshare/releases/latest/download/fshare-<version>-1-x86_64.pkg.tar.zst
+```
+
 From source:
 
 ```bash
